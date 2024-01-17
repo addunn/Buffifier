@@ -1,36 +1,29 @@
-  
-const importExports = (e) => {
-    Object.entries(e).forEach(([s, o]) => {
-        globalThis[s] = o;
-    });
-};
-importExports(await import("./Buffifier.js"));
-importExports(await import("./State.js"));
-importExports(await import("./Entity.js"));
+import { Buffifier } from "./Buffifier.js";  
+import { Entity } from "./Entity.js";  
 
-Buffifier.init();
+// Initialize Buffifier on every thread with the classes you want to back with the buffer.
+// Not supplying a SharedArrayBuffer will automatically create one and stored at Buffifier.buffer.
+Buffifier.init([Entity], null);
 
-const stateObj1 = Buffifier.createObject(DataTypes.State);
-const entityObj1 = Buffifier.createObject(DataTypes.Entity);
+const instanceValues = {
+    x: Math.PI,
+    y: Math.sqrt(2),
+    width: 55.5,
+    height: 55.5,
+    speed: 50,
+    energy: 200,
+    atoms: BigInt(Number.MAX_SAFE_INTEGER) * 2n,
+    parent: null
+}
 
-console.log("stateObj1.mouseX defaults to " + await stateObj1.mouseX.get());
-console.log("stateObj1.mouseY defaults to " + await stateObj1.mouseY.get());
+// This will create an instance of Entity and store it in the SharedArrayBuffer (Buffifier.buffer)
+const entity1 = Buffifier.createObject(Entity, instanceValues);
 
-await stateObj1.mouseX.set(1000);
-await stateObj1.mouseY.set(2000);
+// set a specific prop by calling prop.set()
+await entity1.x.set(-Math.PI);
 
-console.log("Now, stateObj1.mouseX is " + await stateObj1.mouseX.get());
-console.log("Now, stateObj1.mouseY is " + await stateObj1.mouseY.get());
+// get the value of a prop by calling prop.get()
+for(const k of Object.keys(entity1)){
+    console.log(k, await entity1[k].get());
+}
 
-console.log("entityObj1.x defaults to " + await entityObj1.x.get());
-console.log("entityObj1.y defaults to" + await entityObj1.y.get());
-
-await entityObj1.x.set(Math.PI);
-await entityObj1.y.set(Math.sqrt(2));
-
-console.log("Now, entityObj1.x is " + await entityObj1.x.get());
-console.log("Now, entityObj1.y is " + await entityObj1.y.get());
-
-console.log(Buffifier.buffer);
-console.log(stateObj1);
-console.log(entityObj1);
