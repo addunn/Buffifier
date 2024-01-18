@@ -27,12 +27,15 @@ export class ArrayObject {
     };
 
     get #workingSpaceIndex() {
-        return this._b + 1 + 2 + 1; // Uint8 + Uint16 + 1
-    }
-    get #ofBytes() {
-        return Buffifier.getTypeBytes(this.of);
+        return this._b.index + this._b.meta.allocate;
     }
     at(index) {
+
+        const ofType = Buffifier.cache.typesLookup[this.of.get()];
+
+        const typedArrayValueIndex = (this._b + offset) / ofType.bytes;
+
+
         if(Buffifier.isReferenceType(this.of)) {
             const n = Buffifier.rawGet(Buffifier.types.Uint32, this.#workingSpaceIndex + (this.#ofBytes * index))
             return Buffifier.getObjectAtIndex(n);
@@ -85,7 +88,18 @@ export class DataType {
 
     referenceType = null;
 
+    typedArray = null;
+
+    setTranform = (n) => {
+        return n;
+    }
+
+    getTranform = (n) => {
+        return n;
+    }
+
     constructor(typeByte, name) {
+
         this.typeByte = typeByte;
         this.name = name;
         this.referenceType = typeByte > 11;
@@ -100,6 +114,37 @@ export class DataType {
             this.bytes = 8;
         } else {
             throw new Error("Unknown typeByte");
+        }
+
+        if(this.typeByte === 2) {
+            this.typedArray = Buffifier.int8Array;
+        } else if(this.typeByte === 3) {
+            this.typedArray = Buffifier.uint8Array;
+        } else if(this.typeByte === 4) {
+            this.typedArray = Buffifier.int16Array;
+        } else if(this.typeByte === 5) {
+            this.typedArray = Buffifier.uint16Array;
+        } else if(this.typeByte === 6) {
+            this.typedArray = Buffifier.int32Array;
+        } else if(this.typeByte === 7) {
+            this.typedArray = Buffifier.uint32Array;
+        } else if(this.typeByte === 8) {
+            // float32 goes in uint32
+            this.typedArray = Buffifier.uint32Array;
+            this.getTransform = Buffifier.typeConverter.uint32ToFloat32;
+            this.setTransform = Buffifier.typeConverter.float32ToUint32;
+        } else if(this.typeByte === 9) {
+            // float64 goes in biguint64
+            this.typedArray = Buffifier.biguint64Array;
+            this.getTransform = Buffifier.typeConverter.uint64ToFloat64;
+            this.setTransform = Buffifier.typeConverter.float64ToUint64;
+        } else if(this.typeByte === 10) {
+            this.typedArray = Buffifier.bigint64Array;
+        } else if(this.typeByte === 11) {
+            this.typedArray = Buffifier.biguint64Array;
+        } else if(this.typeByte > 11) {
+            // reference objects
+            this.typedArray = Buffifier.uint32Array;
         }
     }
 }
@@ -169,9 +214,9 @@ export class Buffifier {
 
     static cache = {
         typesLookup: null,
-        objectLookup: null
+        classLookup: null,
+        instanceLookup: null
     };
-
 
     static init(classes, sharedArrayBuffer, options) {
 
@@ -197,12 +242,17 @@ export class Buffifier {
         this.bigint64Array = new BigInt64Array(this.buffer);
         this.biguint64Array = new BigUint64Array(this.buffer);
 
+        const dataTypesCount = Object.keys(DataTypes).length;
+
         // stores DataType instances in an array indexed by type byte
-        this.cache.typesLookup = new Array(Object.keys(DataTypes).length),
+        this.cache.typesLookup = new Array(dataTypesCount),
 
         // stores instances of objects that are backed by the buffer...
         // ... indexed by the objects location (index) in the buffer
-        this.cache.objectLookup = new Array(this.buffer.byteLength);
+        this.cache.instanceLookup = new Array(this.buffer.byteLength);
+
+        // stores classes so instances can be created when just having the type byte
+        this.cache.classLookup = new Array(dataTypesCount);
 
         const objectMetaBytes = 5; // first 4 bytes is a lock/unlock, fifth byte is the type
 
@@ -220,6 +270,8 @@ export class Buffifier {
 
             const typeByte = DataTypes[cls.name];
 
+            this.cache.classLookup[typeByte] = cls;
+            
             const meta = cls._meta;
 
             meta.type = this.cache.typesLookup[typeByte];
@@ -247,8 +299,10 @@ export class Buffifier {
                 // needed so the prop is aligned to fit in its corresponding typed array
                 const additionalOffset = this.computeAdditionalOffset(meta.allocate, type);
 
+
                 meta.propsComputed[k] = {
                     offset: meta.allocate + additionalOffset,
+
                     type: type
                 };
 
@@ -261,7 +315,7 @@ export class Buffifier {
         }
 
         // if this thread is the main thread
-        if(sharedArrayBuffer === undefined) {
+        if(!sharedArrayBuffer) {
 
             // mark first block as free block
             Atomics.store(this.uint32Array, 0, this.metaDataByteLength);
@@ -285,7 +339,6 @@ export class Buffifier {
 
         // This is needed so we can properly set the offsets for the object properties.
         // We can now assume that all objects will start at an index that is a multiple of 8.
-
         const remainder = allocate % 8;
 
         // Atomics.add() returns the old value before addition.
@@ -294,61 +347,79 @@ export class Buffifier {
 
     }
 
-    static buildObjectFromIndex(index) {
+    static newInstanceFromIndex(index) {
 
-        const typeByte = this.dataView.getUint8(index);
+        // do we even need atomics here?
+        const typeByte = Atomics.load(this.uint8Array, index + 4);
 
-        const obj = new globalThis[this.typesLookup[typeByte]]();
+        const cls = this.cache.classLookup[typeByte];
+        
+        const instance = new cls();
 
-        this.postProcessObject(obj, this.typesLookup[typeByte], index);
+        this.configureInstance(instance, index, cls._meta);
 
-        return obj;
+        return instance;
 
     }
 
-    static getObjectAtIndex(index) {
+    static getInstance(index) {
 
-        
-        if(this.objectLookup[index] === undefined) {
-            this.objectLookup[index] = this.buildObjectFromIndex(index);
+        if(this.cache.instanceLookup[index] === undefined) {
+            this.cache.instanceLookup[index] = this.newInstanceFromIndex(index);
         }
 
-        return this.objectLookup[index];
+        return this.cache.instanceLookup[index];
     }
 
+    static getRaw(type, typedArrayValueIndex) {
 
+        if(type.referenceType){
+                        
+            const index = Atomics.load(type.typedArray, typedArrayValueIndex);
+
+            return (index === 0 ? null : Buffifier.getInstance(index));
+
+        } else {
+
+            return (type.getTransform(Atomics.load(type.typedArray, typedArrayValueIndex)));
+
+        }
+    }
+    static setRaw(v, type, typedArrayValueIndex) {
+
+        if(type.referenceType){
+
+            if(v === null) {
+
+                Atomics.store(type.typedArray, typedArrayValueIndex, 0);
+
+            } else {
+
+                Atomics.store(type.typedArray, typedArrayValueIndex, v._b.index);
+
+            }
+            
+        } else {
+
+            Atomics.store(type.typedArray, typedArrayValueIndex, type.setTransform(v));
+
+        }
+
+    }
     static defineObjectProp(o, prop) {
 
-        const propTypeName = o._b.props[prop].type.name;
-        
+        const props = o._b.meta.propsComputed;
+
         const objectIndex = o._b.index;
-        const offset = o._b.props[prop].offset;
-        const referenceType = o._b.props[prop].type.referenceType;
 
-        const bytes = o._b.props[prop].type.bytes;
-        const typedArrayValueIndex = (objectIndex + offset) / bytes;
+        const offset = props[prop].offset;
 
-        const typedArrayLockIndex = o._b.index / bytes;
+        const type = props[prop].type;
 
-        let typedArray = referenceType ? this.uint32Array : this[propTypeName.toLowerCase() + "Array"];
+        const typedArrayValueIndex = (objectIndex + offset) / type.bytes;
 
-        let getTransform = (num) => {
-            return num;
-        };
+        const typedArrayLockIndex = o._b.index / type.bytes;
 
-        let setTransform = (num) => {
-            return num;
-        };
-
-        if(propTypeName === "Float32") {
-            typedArray = this.uint32Array;
-            getTransform = this.typeConverter.uint32ToFloat32;
-            setTransform = this.typeConverter.float32ToUint32;
-        } else if(propTypeName === "Float64"){
-            typedArray = this.biguint64Array;
-            getTransform = this.typeConverter.uint64ToFloat64;
-            setTransform = this.typeConverter.float64ToUint64;
-        }
 
         Object.defineProperty(o, prop, {
             enumerable: true,
@@ -358,17 +429,21 @@ export class Buffifier {
 
                         const f = () => {
 
+
+                            resolve(Buffifier.getRaw(type, typedArrayValueIndex));
+                            /*
                             if(referenceType){
                         
                                 const index = Atomics.load(typedArray, typedArrayValueIndex);
             
-                                resolve(index === 0 ? null : 666); //Buffifier.getObjectAtIndex(index);
+                                resolve(index === 0 ? null : Buffifier.getInstance(index));
             
                             } else {
 
                                 resolve(getTransform(Atomics.load(typedArray, typedArrayValueIndex)));
 
                             }
+                            */
                         };
     
                         const p = Atomics.waitAsync(Buffifier.int32Array, typedArrayLockIndex, 2, 2000);
@@ -386,6 +461,9 @@ export class Buffifier {
 
                         const f = () => {
 
+                            Buffifier.setRaw(v, type, typedArrayValueIndex);
+
+                            /*
                             if(referenceType){
 
                                 if(v === null) {
@@ -404,6 +482,7 @@ export class Buffifier {
                                 Atomics.store(typedArray, typedArrayValueIndex, setTransform(v));
 
                             }
+                            */
 
                             resolve();
 
@@ -450,10 +529,33 @@ export class Buffifier {
 
     }
 
+    static configureInstance(instance, index, meta) {
+
+        // construct helper object...
+        const _b = {
+            index: index,
+            meta: meta,
+            lock: this.lockObject.bind(instance),
+            unlock: this.unlockObject.bind(instance),
+        };
+
+        Object.defineProperty(instance, "_b", {
+            value: _b,
+            writable: false,
+            enumerable: false,
+            configurable: false
+        });
+
+        for(const propName of meta.propsLookup){
+            this.defineObjectProp(instance, propName);
+        }
+
+    }
+
     static createObject(cls, values, options) {
 
         const workingOptions = Object.assign({
-            workingSpace: 0
+            workingSpace: 100000 * 4 // 0.4 MB of space for the array ()
         }, options);
 
         const meta = cls._meta;
@@ -471,30 +573,8 @@ export class Buffifier {
 
         // create vanilla instance
         const instance = new cls();
-        
-        // construct buffifier object...
-        const buffifier = {
-            index: objectBlockIndex,
-            props: meta.propsComputed,
-            lock: this.lockObject.bind(instance),
-            unlock: this.unlockObject.bind(instance),
-        };
 
-        if(workingOptions.workingSpace !== 0) {
-            // for variable length objects (e.g., arrays), store the index for quicker access
-            buffifier.workingSpaceIndex = objectBlockIndex + workingOptions.workingSpace;
-        }
-
-        Object.defineProperty(instance, "_b", {
-            value: buffifier,
-            writable: false,
-            enumerable: false,
-            configurable: false
-        });
-
-        for(const propName of meta.propsLookup){
-            this.defineObjectProp(instance, propName);
-        }
+        this.configureInstance(instance, objectBlockIndex, meta);
 
         if(!!values) {
             // set any initial values
