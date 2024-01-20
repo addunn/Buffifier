@@ -2,6 +2,10 @@ import { DataTypes } from "./Buffifier.js";
 
 export class Entity {
 
+    width = 5;
+    depth = 5;
+    height = 10;
+
     static _meta = {
 
         props: {

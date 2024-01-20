@@ -52,8 +52,6 @@ export class ArrayObject {
 
         this.#ofType = Buffifier.cache.typesLookup[ofVal];
 
-        console.log("this.#ofType", this.#ofType);
-
         const currentWorkingSpaceIndex = this._b.index + this._b.meta.allocate;
 
         const remainder = (this._b.index + this._b.meta.allocate) % this.#ofType.bytes;
@@ -268,13 +266,38 @@ export class Buffifier {
     static bigint64Array = null;
     static biguint64Array = null;
 
-    static metaDataByteLength = 8; // must be a multiple of 8 (First 4 bytes is for next free block index)
+     // must be a multiple of 8 
+     // - [0-3] bytes is for next free block index
+     // - [4-7] is for signaling workers
+    static metaDataByteLength = 8;
+
+    static signalIndex = 1;
 
     static cache = {
         typesLookup: null,
         classLookup: null,
         instanceLookup: null
     };
+
+    static getFirstObject() {
+        return this.getInstance(this.metaDataByteLength);
+    }
+
+    static signalWorkers() {
+
+        const n1 = Atomics.compareExchange(this.int32Array, this.signalIndex, 0, 1);
+        if(n1 !== 0) {
+            throw new Error("signalWorkers: Expected 0 on compareExchange. Got " + n1 + ".");
+        }
+
+        console.log("Agents awoken: " + Atomics.notify(this.int32Array, this.signalIndex));
+
+        const n2 = Atomics.compareExchange(this.int32Array, this.signalIndex, 1, 0);
+        if(n2 !== 1){
+            throw new Error("signalWorkers: Expected 1 on compareExchange. Got " + n2 + ".");
+        }
+        
+    }
 
     static init(classes, sharedArrayBuffer, options) {
 
@@ -551,7 +574,7 @@ export class Buffifier {
             throw new Error("Trying to unlock an already unlocked object");
         }
 
-        Atomics.notify(Buffifier.int32Array, this._b.index / 4, 1);
+        Atomics.notify(Buffifier.int32Array, this._b.index / 4);
 
     }
 
