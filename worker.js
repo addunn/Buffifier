@@ -18,36 +18,43 @@ const workers = {
 };
 
 let worker = null;
+let workerIndex = null;
+
 
 const tick = async () => {
 
     Atomics.wait(Buffifier.int32Array, Buffifier.signalIndex, 0);
 
+    const n1 = performance.now();
+
     await worker.work();
+    // worker.work();
+
+    const temp = (performance.now()- n1) * 1000;
+    Buffifier.storeMetaData(temp, 0);
+    
+    console.log("YAYA", temp, Buffifier.getWorkerMetaData(workerIndex, 0));
 
     tick();
 }
 
-let attachments = null;
 
 const onMessage = async ({ data }) => {
 
     if(data[0] === "init") {
 
+        workerIndex = data[3];
+        
+        Buffifier.init([State, World, Entity, ArrayObject], data[4], null, data[3]);
+
         worker = new workers[data[1]]();
         
-        //console.log("FROM WORKER:", data, JSON.stringify(data[3]));
-        await worker.init(Buffifier.getFirstObject(), data[2], attachments);
+        await worker.init(Buffifier.getFirstObject(), data[2]);
 
         postMessage(["ready"]);
 
         tick();
 
-    } else if(data[0] === "init-buffer") {
-
-        attachments = data[1];
-        //Buffifier.init([State, World, Entity, ArrayObject], data[1]);
-        Buffifier.init([State, World, Entity, ArrayObject], data[2]);
     }
 
 };

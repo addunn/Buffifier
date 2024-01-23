@@ -42,6 +42,35 @@ export class ArrayObject {
 
     #lengthTypedArrayIndex = null;
 
+
+/*
+    [Symbol.iterator]() {
+
+        // Use a new index for each iterator. This makes multiple
+        // iterations over the iterable safe for non-trivial cases,
+        // such as use of break or nested looping over the same iterable.
+        let index = 0;
+
+        return {
+            // Note: using an arrow function allows `this` to point to the
+            // one of `[@@iterator]()` instead of `next()`
+            next: () => {
+                if (index < this.#data.length) {
+                    return { 
+                        value: this.#data[index++], 
+                        done: false 
+                    };
+                } else {
+                    return { 
+                        done: true 
+                    };
+                }
+            },
+        };
+
+    }
+*/
+
     onCreatedInstance() {
 
         const ofProp = this._b.meta.propsComputed.of;
@@ -82,7 +111,11 @@ export class ArrayObject {
     }
 
     get(index) {
-        return Buffifier.getRaw(this.#ofType, (this.#workingSpaceIndex / this.#ofType.bytes) + index);
+
+        return Buffifier.getInstance(Atomics.load(this.#ofType.typedArray, this.#workingSpaceTypedZeroIndex + index));
+
+
+        //return Buffifier.getRaw(this.#ofType, this.#workingSpaceTypedZeroIndex + index);
     }
     
     async push(v) {
@@ -129,6 +162,35 @@ export class ArrayObject {
 
 }
 
+export class RollingAverage {
+
+    #arr = null;
+    #sum = 0;
+
+    value = null;
+
+    constructor(length, fill = 0) {
+
+        this.#arr = new Array(length);
+
+        this.#arr.fill(fill);
+
+        for(const n of this.#arr) {
+            this.#sum += n;
+        }
+
+        this.value = this.#sum / this.#arr.length;
+
+    }
+
+    add(n) {
+        const popped = this.#arr.shift();
+        this.#arr.push(n);
+
+        this.#sum += n - popped;
+        this.value = this.#sum / this.#arr.length;
+    }
+}
 
 export class DataType {
 
@@ -269,9 +331,21 @@ export class Buffifier {
      // must be a multiple of 8 
      // - [0-3] bytes is for next free block index
      // - [4-7] is for signaling workers
-    static metaDataByteLength = 8;
+     // - [8-9] is for how many workers there are
+     // - [10-11] is for how much to allocate per worker
+
+     // #### #### #### #### #### ####
+    static metaDataByteLength = 16;
 
     static signalIndex = 1;
+
+    static isMain = false;
+    
+    static workers = null;    
+    static workerMetaDataAllocate = null;
+   
+    static workerIndex = null;
+    static workerUint32IndexZero = null;
 
     static cache = {
         typesLookup: null,
@@ -280,32 +354,60 @@ export class Buffifier {
     };
 
     static getFirstObject() {
-        return this.getInstance(this.metaDataByteLength);
+        return this.getInstance(this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate));
     }
 
     static signalWorkers() {
 
         const n1 = Atomics.compareExchange(this.int32Array, this.signalIndex, 0, 1);
+        
         if(n1 !== 0) {
             throw new Error("signalWorkers: Expected 0 on compareExchange. Got " + n1 + ".");
         }
 
-        console.log("Agents awoken: " + Atomics.notify(this.int32Array, this.signalIndex));
+        const agentsAwoken = Atomics.notify(this.int32Array, this.signalIndex);
 
         const n2 = Atomics.compareExchange(this.int32Array, this.signalIndex, 1, 0);
+
         if(n2 !== 1){
             throw new Error("signalWorkers: Expected 1 on compareExchange. Got " + n2 + ".");
         }
+
+        return agentsAwoken;
         
     }
 
-    static init(classes, sharedArrayBuffer, options) {
+    static storeMetaData(val, index) {
+
+        // this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate)
+        if(this.isMain) {
+            throw new Error("Only workers can store meta data.")
+        }
+
+        Atomics.store(this.uint32Array, this.workerUint32IndexZero + index, Math.round(val));
+    }
+
+    static getWorkerMetaData(workerIndex, index) {
+
+        //if(!this.isMain) {
+        //    throw new Error("Only main thread can call getWorkerMetaData.")
+        //}
+
+        const workerUint32IndexZero = (this.metaDataByteLength / 4) + (workerIndex * (this.workerMetaDataAllocate / 4));
+
+        return Atomics.load(this.uint32Array, workerUint32IndexZero + index);
+    }
+
+    static init(classes, sharedArrayBuffer, options, workerIndex = -1) {
+
+        if(!sharedArrayBuffer) {
+            this.isMain = true;
+        }
 
         const workingOptions = Object.assign({
             allocate: 500000000 // allocates 500 MB for use (has to be evenly divisible by 8)
         }, options);
 
-        // this.typeConverter =  new TypeConverter();
 
         // if given, use sharedArrayBuffer, else create new shared buffer array
         this.buffer = (!sharedArrayBuffer ? new SharedArrayBuffer(workingOptions.allocate) : sharedArrayBuffer);
@@ -323,17 +425,48 @@ export class Buffifier {
         this.bigint64Array = new BigInt64Array(this.buffer);
         this.biguint64Array = new BigUint64Array(this.buffer);
 
+        if(this.isMain) {
+
+            if(!("workers" in workingOptions)) {
+                throw new Error("Main thread needs to specify number of workers.");
+            }
+            
+            if(!("workerMetaDataAllocate" in workingOptions)) {
+                throw new Error("Main thread needs to specify how much to allocate for each worker.");
+            } else if(workingOptions.workerMetaDataAllocate % 8 !== 0) {
+                throw new Error("workerMetaDataAllocate needs to be a multiple of 8.");
+            }
+
+            this.workers = workingOptions.workers;
+            this.workerMetaDataAllocate = workingOptions.workerMetaDataAllocate;
+
+            Atomics.store(this.uint16Array, 4, this.workers);
+            Atomics.store(this.uint16Array, 5, this.workerMetaDataAllocate);
+
+        } else {
+
+            this.workers = Atomics.load(this.uint16Array, 4);
+            this.workerMetaDataAllocate = Atomics.load(this.uint16Array, 5);
+
+            this.workerIndex = workerIndex;
+            
+            this.workerUint32IndexZero = (this.metaDataByteLength / 4) + (this.workerIndex * (this.workerMetaDataAllocate / 4));
+
+        }
+
+        
+
         const dataTypesCount = Object.keys(DataTypes).length;
 
         // stores DataType instances in an array indexed by type byte
-        this.cache.typesLookup = new Array(dataTypesCount),
+        this.cache.typesLookup = new Array(dataTypesCount);
+
+        // stores classes so instances can be created when just having the type byte
+        this.cache.classLookup = new Array(dataTypesCount);
 
         // stores instances of objects that are backed by the buffer...
         // ... indexed by the objects location (index) in the buffer
         this.cache.instanceLookup = new Array(this.buffer.byteLength);
-
-        // stores classes so instances can be created when just having the type byte
-        this.cache.classLookup = new Array(dataTypesCount);
 
         const objectMetaBytes = 12; // [0-3] bytes is a lock/unlock, [4] byte is the type, [8-11] is working space amount
 
@@ -380,7 +513,6 @@ export class Buffifier {
                 // needed so the prop is aligned to fit in its corresponding typed array
                 const additionalOffset = this.computeAdditionalOffset(meta.allocate, type);
 
-
                 meta.propsComputed[k] = {
                     offset: meta.allocate + additionalOffset,
                     type: type
@@ -394,11 +526,10 @@ export class Buffifier {
 
         }
 
-        // if this thread is the main thread
-        if(!sharedArrayBuffer) {
+        if(this.isMain) {
 
             // mark first block as free block
-            Atomics.store(this.uint32Array, 0, this.metaDataByteLength);
+            Atomics.store(this.uint32Array, 0, this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate));
 
         }
 
@@ -430,10 +561,12 @@ export class Buffifier {
     static newInstanceFromIndex(index) {
 
         // do we even need atomics here?
-        const typeByte = Atomics.load(this.uint8Array, index + 4);
+        // const typeByte = Atomics.load(this.uint8Array, index + 4);
+        const typeByte = this.uint8Array[index + 4];
 
         // also do we need atomics here because working space should only be written once on object creation
-        const workingSpace = Atomics.load(this.uint32Array, (index + 8) / 4);
+        // const workingSpace = Atomics.load(this.uint32Array, (index + 8) / 4);
+        const workingSpace = this.uint32Array[(index + 8) / 4];
 
         const cls = this.cache.classLookup[typeByte];
         
@@ -465,6 +598,7 @@ export class Buffifier {
         if(type.referenceType){
                         
             const index = Atomics.load(type.typedArray, typedArrayValueIndex);
+            //const index = type.typedArray[typedArrayValueIndex];
 
             return (index === 0 ? null : Buffifier.getInstance(index));
 
@@ -499,55 +633,27 @@ export class Buffifier {
 
         const props = o._b.meta.propsComputed;
 
-        const objectIndex = o._b.index;
-
-        const offset = props[prop].offset;
-
         const type = props[prop].type;
 
-        const typedArrayValueIndex = (objectIndex + offset) / type.bytes;
+        const typedArrayValueIndex = (o._b.index + props[prop].offset) / type.bytes;
 
-        const typedArrayLockIndex = o._b.index / type.bytes;
+        //const typedArrayLockIndex = o._b.index / type.bytes;
 
         Object.defineProperty(o, prop, {
             enumerable: true,
-            value: {
-                async get() {
-                    return new Promise((resolve) => {
-
-                        const f = () => {
-                            resolve(Buffifier.getRaw(type, typedArrayValueIndex));
-                        };
-    
-                        const p = Atomics.waitAsync(Buffifier.int32Array, typedArrayLockIndex, 2, 2000);
-    
-                        if(p.async) {
-                            p.value.then(f);
-                        } else {
-                            f("not async, not locked");
-                        }
-                        
-                    });
-                },
-                async set(v) {
-                    return new Promise((resolve) => {
-
-                        const f = () => {
-                            Buffifier.setRaw(v, type, typedArrayValueIndex);
-                            resolve();
-                        }
-        
-                        const p = Atomics.waitAsync(Buffifier.int32Array, typedArrayLockIndex, 2, 2000);
-        
-                        if(p.async) {
-                            p.value.then(f);
-                        } else {
-                            f("not async, not locked");
-                        }
-
-                    });
-                }
+            get() {
+                //if(!Buffifier.isMain) {
+                //    Atomics.wait(Buffifier.int32Array, typedArrayLockIndex, 2);
+                //}
+                return Buffifier.getRaw(type, typedArrayValueIndex);
+            },
+            set(v) {
+                //if(!Buffifier.isMain) {
+                //    Atomics.wait(Buffifier.int32Array, typedArrayLockIndex, 2);
+                //}
+                Buffifier.setRaw(v, type, typedArrayValueIndex);
             }
+
         });
 
     }
@@ -606,53 +712,44 @@ export class Buffifier {
 
     static createInstance(cls, values, options) {
 
-        //return new Promise((resolve) => {
+        const workingOptions = Object.assign({
+            workingSpace: 0
+        }, options);
 
-            const workingOptions = Object.assign({
-                workingSpace: 0
-            }, options);
+        const meta = cls._meta;
 
-            const meta = cls._meta;
+        const objectBlockIndex = this.reserveFreeBlock(meta.allocate + workingOptions.workingSpace);
 
-            const objectBlockIndex = this.reserveFreeBlock(meta.allocate + workingOptions.workingSpace);
+        // since no thread at this point knows about objectBlockIndex except right here... 
+        // ... so we should be good to write at that location without issue
 
-            // since no thread at this point knows about objectBlockIndex except right here... 
-            // ... so we should be good to write at that location without issue
+        // objectBlockIndex is a multiple of 4 so hoping dividing by 4 gives an integer
 
-            // objectBlockIndex is a multiple of 4 so hoping dividing by 4 gives an integer
+        this.int32Array[objectBlockIndex / 4] = 1; // mark as unlocked
 
-            this.int32Array[objectBlockIndex / 4] = 1; // mark as unlocked
+        this.uint8Array[objectBlockIndex + 4] = meta.type.typeByte; // add type byte
 
-            this.uint8Array[objectBlockIndex + 4] = meta.type.typeByte; // add type byte
+        this.uint32Array[(objectBlockIndex + 8) / 4] = workingOptions.workingSpace; // add working space size
 
-            this.uint32Array[(objectBlockIndex + 8) / 4] = workingOptions.workingSpace; // add working space size
+        // create vanilla instance
+        const instance = new cls();
 
-            // create vanilla instance
-            const instance = new cls();
+        this.configureInstance(instance, objectBlockIndex, meta, workingOptions);
 
-            this.configureInstance(instance, objectBlockIndex, meta, workingOptions);
-
-            if(!!values) {
-                // set any initial values
-                for (const [key, val] of Object.entries(values)) {
-                    // no need for respecting the lock here, but it does anyway
-                    instance[key].set(val);
-                }
+        if(!!values) {
+            // set any initial values
+            for (const [key, val] of Object.entries(values)) {
+                // no need for respecting the lock here, but it does anyway
+                instance[key] = val;
             }
+        }
 
-            //const done = () => {
-            //    resolve(instance);
-            //};
+        if("onCreatedInstance" in instance) {
+            instance.onCreatedInstance();
+        }
 
-            if("onCreatedInstance" in instance) {
-                instance.onCreatedInstance();
-            }// else {
-             //   done();
-            //}
+        return instance;
 
-            return instance;
-
-        //});
 
     }
 

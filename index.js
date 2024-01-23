@@ -2,11 +2,12 @@ import { Buffifier, ArrayObject, DataTypes } from "./Buffifier.js";
 import { State } from "./State.js";  
 import { World } from "./World.js";  
 import { Entity } from "./Entity.js";  
+import { RateCounter } from "./RateCounter.js";  
 
-
-// Initialize Buffifier on every thread with the classes you want to back with the buffer.
-// Not supplying a SharedArrayBuffer will automatically create one and stored at Buffifier.buffer.
-Buffifier.init([State, World, Entity, ArrayObject], null);
+Buffifier.init([State, World, Entity, ArrayObject], null, {
+    workers: 2,
+    workerMetaDataAllocate: 8
+});
 
 const state = Buffifier.createInstance(State);
 
@@ -15,86 +16,169 @@ const world = Buffifier.createInstance(World);
 const items = Buffifier.createInstance(ArrayObject, {
     of: DataTypes.Entity
 }, {
-    workingSpace: 10000 * 4 // 10000 items allowed
+    workingSpace: 300000 * 4 // 300000 items allowed
 });
 
-for(let n = 0; n < 1000; n++) {
+const worker0Speed = document.getElementById("worker0-speed");
+const worker1Speed = document.getElementById("worker1-speed");
+const mainThreadFPS = document.getElementById("main-fps");
 
-    const entity = Buffifier.createInstance(Entity, {
-        x: (Math.random() * (world.cellSize * world.cellsX)) - ((world.cellSize * world.cellsX) / 2),
-        z: (Math.random() * (world.cellSize * world.cellsZ)) - ((world.cellSize * world.cellsZ) / 2),
-        speed: Math.random()
-    });
-    
-    await items.push(entity);
+state.world = world;
 
-}
+world.items = items;
 
-await world.items.set(items);
-
-await state.world.set(world);
-
-
-
+const tooltips = [];
 
 const app = {
-    
 
+
+    
+    fps: null,
+
+    mouseWheelDeltaY: 0,
+    
     mouseX: 0,
     mouseY: 0,
+
+    mouseDown: 0,
+
+    keyWDown: false,
+    keyADown: false,
+    keySDown: false,
+    keyDDown: false,
+
     canvasWidth: document.body.offsetWidth,
     canvasHeight: document.body.offsetHeight,
-    mouseDown: false,
 
+    workersCount: null,
     workers: {
         entityMover: null,
-        entityZSetter: null,
+        //entityZSetter: null,
         renderer3D: null
-
     },
+
     start() {
-        console.log("APP START!");
+
+        app.fps = new RateCounter();
+
+        setInterval(() => {
+            mainThreadFPS.innerText = app.fps.value;
+            worker0Speed.innerText = Buffifier.getWorkerMetaData(0, 0);
+            worker1Speed.innerText = Buffifier.getWorkerMetaData(1, 0);
+        }, 500);
+
         app.tick = app.tock;
         app.tick();
     },
+
     tick: null,
+
     tock() {
-        requestAnimationFrame(async () => {
+        requestAnimationFrame(() => {
 
-            await app.setState();
 
-            Buffifier.signalWorkers();
 
+            app.setState();
+
+            const workersSignaled = Buffifier.signalWorkers();
+
+            
+
+
+            for(let n = 0; n < world.items.length; n++) {
+
+                const ent = world.items.get(n);
+                
+                let sY = ent.screenY;
+                let sX = ent.screenX;
+
+                tooltips[n].style.transform = "translate(" + (sX) + "px," + (sY) + "px)";
+                
+
+            }
+    
+
+            
+            if(workersSignaled < app.workersCount) {
+                console.log("WORKERS NOT SIGNALED", (app.workersCount - workersSignaled));
+            }
 
             //setTimeout(() => {
-              //  console.log("TICK");
+                //console.log("TICK");
                 app.tick();
-            //}, 10);
-            
-        
+            //}, 500);
+            app.fps.log();
+
         });
     },
-    async setState() {
-        await state.mouseX.set(app.mouseX);
-        await state.mouseY.set(app.mouseY);
-        await state.mouseDown.set(app.mouseDown);
-        await state.canvasWidth.set(app.canvasWidth);
-        await state.canvasHeight.set(app.canvasHeight);
-    }
 
+    setState() {
+
+        state.mouseX = app.mouseX;
+        state.mouseY = app.mouseY;
+
+        //state.mouseWheelDeltaY = app.mouseWheelDeltaY;
+        
+        state.mouseDown = app.mouseDown;
+
+        state.keyWDown = app.keyWDown;
+        state.keyADown = app.keyADown;
+        state.keySDown = app.keySDown;
+        state.keyDDown = app.keyDDown;
+
+        state.canvasWidth = app.canvasWidth;
+        state.canvasHeight = app.canvasHeight;
+
+    }
 };
 
-await app.setState();
+app.workersCount = Object.keys(app.workers).length;
+app.setState();
 
+const worldWidth = (world.cellSize * world.cellsX);
+const worldDepth = (world.cellSize * world.cellsZ);
 
+for(let n = 0; n < 500; n++) {
+    //setInterval(() => {
+        const entity = Buffifier.createInstance(Entity, {
+            x: (Math.random() * worldWidth) - (worldWidth / 2),
+            z: (Math.random() * worldDepth) - (worldDepth / 2),
+            speed: Math.random()
+        });
+        
+        const tt = document.createElement("div");
+        tt.classList.add("tt");
+        document.body.appendChild(tt);
 
-document.addEventListener("mousedown", (e) => {
-    app.mouseDown = true;
+        tooltips.push(tt);
+
+        await items.push(entity);
+    //}, 1000)
+}
+
+document.addEventListener("wheel", (e) => {
+    state.mouseWheelDeltaY += e.deltaY;
 });
 
-document.addEventListener("mouseup", (e) => {
-    app.mouseDown = false;
-});
+["mousedown","mouseup"].forEach(s => document.addEventListener(s, (e) => {
+    app.mouseDown = (e.type === "mousedown") ? (e.button + 1) : 0;
+}));
+
+["keydown","keyup"].forEach(s => document.addEventListener(s, (e) => {
+
+    const down = (e.type === "keydown");
+
+    if(e.code === "KeyW") {
+        app.keyWDown = down;
+    } else if(e.code === "KeyA") {
+        app.keyADown = down;
+    } else if(e.code === "KeyS") {
+        app.keySDown = down;
+    } else if(e.code === "KeyD") {
+        app.keyDDown = down;
+    }
+
+}));
 
 document.addEventListener("mousemove", (e) => {
     app.mouseX = e.clientX;
@@ -105,11 +189,6 @@ window.addEventListener("resize", () => {
     app.canvasWidth = document.body.offsetWidth;
     app.canvasHeight = document.body.offsetHeight;
 });
-window.addEventListener("keydown", () => {
-    
-});
-
-
 
 
 
@@ -119,28 +198,19 @@ app.workers.renderer3D = new Worker("worker.js?renderer3D", { type: "module" });
 
 let ready = 0;
 
-
 app.workers.renderer3D.addEventListener("message", (e) => {
 
     if(e.data[0] === "loaded") {
 
-        //const offScreenCanvas = document.getElementById("canvas").transferControlToOffscreen();
-
-        const c = document.querySelector("canvas");
-
-        c.width = app.canvasWidth;
-        c.height = app.canvasHeight;
-        
-        const offscreen = c.transferControlToOffscreen();
-
-
-        app.workers.renderer3D.postMessage(["init-buffer", offscreen, Buffifier.buffer], [offscreen]);
+        const offscreen = document.getElementById("canvas").transferControlToOffscreen();
 
         app.workers.renderer3D.postMessage(["init", "Renderer3DWorker", {
+            canvas: offscreen,
             devicePixelRatio: globalThis.devicePixelRatio
-        }]);//, offscreen], [offscreen]);
+        }, 1, Buffifier.buffer], [offscreen]);
 
     } else if(e.data[0] === "ready") {
+        console.log("renderer3D ready!");
         ready++;
     }
 });
@@ -149,12 +219,11 @@ app.workers.renderer3D.addEventListener("message", (e) => {
 app.workers.entityMover.addEventListener("message", (e) => {
 
     if(e.data[0] === "loaded") {
-
-        app.workers.entityMover.postMessage(["init-buffer", null, Buffifier.buffer]);
-
-        app.workers.entityMover.postMessage(["init", "EntityMoverWorker", {}]);
+        
+        app.workers.entityMover.postMessage(["init", "EntityMoverWorker", {}, 0, Buffifier.buffer]);
 
     } else if(e.data[0] === "ready") {
+        console.log("entityMover ready!");
         ready++;
     }
 });
@@ -172,7 +241,7 @@ app.workers.entityZSetter.addEventListener("message", (e) => {
 */
 
 const int1 = setInterval(() => {
-    if(ready > 1) {
+    if(ready === app.workersCount) {
         app.start();
         clearInterval(int1);
     }

@@ -11,15 +11,37 @@
                 padding: 0;
                 overflow: hidden;
                 background: #333;
+                font-family: monospace;
+                color: #ccc;
             }
 
-
+            .debug {
+                position: absolute;
+                top: 0;
+                left: 0;
+            }
+            
+            .tt {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 1px;
+                height: 1px;
+                transform: translate(0, 0);
+                background: #f00;
+                overflow: hidden;
+            }
         </style>
     </head>
     <body>
+    
         <canvas id="canvas"></canvas>
-
-        <!--
+        <div class="debug">
+            <div>main FPS: <span id="main-fps"></span></div>
+            <div>worker #0 ms/work: <span id="worker0-speed"></span></div>
+            <div>worker #1 ms/work: <span id="worker1-speed"></span></div>
+        </div>
+<!--
         <script type="importmap">
 			{
 				"imports": {
@@ -28,8 +50,8 @@
 				}
 			}
 		</script>
-        -->
 
+-->
         <script type="module" src="index.js"></script>
     </body>
 </html>

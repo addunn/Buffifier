@@ -6,41 +6,67 @@ export class EntityMoverWorker {
 
     worldItems = null;
 
-    async init(state, config) {
-        console.log("EntityMoverWorker init", state, config);
+    init = async (state, config) => {
+        
         return new Promise(async (resolve) => {
 
+            console.log("EntityMoverWorker init", state, config);
+            
             this.state = state;
 
-            this.world = await state.world.get();
+            this.world = state.world;
 
-            this.worldItems = await this.world.items.get();
+            this.worldItems = this.world.items;
 
             resolve();
 
         });
     }
 
-    async work() {
+    work = async () => {
         return new Promise(async (resolve) => {
-            console.log("EntityMoverWorker work");
-            
-            const itemsLength = await this.worldItems.length.get();
 
-            for(let n = 0; n < itemsLength; n++) {
-                const ent = await this.worldItems.get(n);
-                // random movements for now
+            /*
+            let t = 0;
 
-                let x = await ent.x.get();
-                let z = await ent.z.get();
+            for(let m = 0; m < 100; m++) {
 
-                x = x + (Math.random() - 0.5);
-                z = z + (Math.random() - 0.5);
+                for(let n = 0; n < 1000; n++) {
+                    const ent = await this.worldItems.get(n);
+                    t = (m + n) / 3;
+                    
+                }
 
-                await ent.x.set(x);
-                await ent.z.set(z);
             }
+            */
 
+            
+            //const itemsLength =;
+
+            
+            //for(let m = 0; m < 4; m++) {
+
+                
+                for(let n = 0; n <  this.worldItems.length; n++) {
+                    //const k = await this.worldItems.length;
+                    const ent = this.worldItems.get(n);
+
+                    // random movements for now
+
+                    //let x = ent.x;
+                    //let z = ent.z;
+
+                    ent.x = ent.x + 0.1;
+                    ent.y = ent.y + 0.1;
+                    ent.z = ent.z + 0.1;
+
+                    //ent.x = x;
+                    //ent.z = z;
+
+                }
+                
+            //}
+            
             resolve();
 
         });

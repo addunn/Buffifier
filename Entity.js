@@ -16,8 +16,8 @@ export class Entity {
 
             speed: DataTypes.Float32,
 
-            screenX: DataTypes.Float32,
-            screenY: DataTypes.Float32,
+            screenX: DataTypes.Int32,
+            screenY: DataTypes.Int32,
             cameraDistance: DataTypes.Float32
 
         }

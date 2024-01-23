@@ -8,6 +8,13 @@ export class World {
     cellsZ = 100;
     cellsX = 100;
 
+    get width() {
+        return this.cellSize * this.cellsX;
+    }
+
+    get depth() {
+        return this.cellSize * this.cellsZ;
+    }
 
     static _meta = {
 
