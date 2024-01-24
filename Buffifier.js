@@ -1,7 +1,40 @@
+import { MainThread } from "./threads/Main.js";
+import { Renderer3DThread } from "./threads/Renderer3D.js";
+import { EntityMoverThread } from "./threads/EntityMover.js";
+import { EntityZSetterThread } from "./threads/EntityZSetter.js";
+
+import { App } from "./App.js";
+import { World } from "./World.js";
+import { Entity } from "./Entity.js";
+import { BufferedArray } from "./BufferedArray.js";
+
+const config = {
+    classes: [
+        App,
+        World,
+        Entity,
+        BufferedArray
+    ],
+    threads: {
+        main: [ 
+            // only one main thread class currently supported
+            MainThread 
+        ],
+        canvas: [ 
+            // only one canvas thread class currently supported
+            Renderer3DThread
+        ],
+        others: [
+            EntityMoverThread, 
+            EntityZSetterThread
+        ]
+    }
+};
+
 
 
 export const DataTypes = {
-    null: 0, // null is weird, wouldn't recommend using it as a type
+    null: 0,
     boolean: 1,
     Int8: 2,
     Uint8: 3,
@@ -13,190 +46,20 @@ export const DataTypes = {
     Float64: 9,
     BigInt64: 10,
     BigUint64: 11,
-    ArrayObject: 12,
-    State: 13,
+    // ### begin config.classes... ###
+    App: 12,
+    World: 13,
     Entity: 14,
-    World: 15
-};
-
-
-export class ArrayObject {
-
-    static _meta = {
-        props: {
-            of: DataTypes.Uint8,
-            length: DataTypes.Uint32
-        }
-    };
-    
-
-    #workingSpaceIndex = null;
-
-    #workingSpaceTypedZeroIndex = null;
-
-    
-
-    #ofType = null;
-
-    #lengthType = null;
-
-    #lengthTypedArrayIndex = null;
-
-
-/*
-    [Symbol.iterator]() {
-
-        // Use a new index for each iterator. This makes multiple
-        // iterations over the iterable safe for non-trivial cases,
-        // such as use of break or nested looping over the same iterable.
-        let index = 0;
-
-        return {
-            // Note: using an arrow function allows `this` to point to the
-            // one of `[@@iterator]()` instead of `next()`
-            next: () => {
-                if (index < this.#data.length) {
-                    return { 
-                        value: this.#data[index++], 
-                        done: false 
-                    };
-                } else {
-                    return { 
-                        done: true 
-                    };
-                }
-            },
-        };
-
-    }
-*/
-
-    onCreatedInstance() {
-
-        const ofProp = this._b.meta.propsComputed.of;
-
-        const ofTypedArrayIndex = (this._b.index + ofProp.offset) / ofProp.type.bytes;
-
-        const ofVal = Atomics.load(ofProp.type.typedArray, ofTypedArrayIndex);
-
-        this.#ofType = Buffifier.cache.typesLookup[ofVal];
-
-        const currentWorkingSpaceIndex = this._b.index + this._b.meta.allocate;
-
-        const remainder = (this._b.index + this._b.meta.allocate) % this.#ofType.bytes;
-
-        const additionalOffset = remainder === 0 ? remainder : (this.#ofType.bytes - remainder);
-
-        this.#workingSpaceIndex = currentWorkingSpaceIndex + additionalOffset;
-
-        this.#workingSpaceTypedZeroIndex = this.#workingSpaceIndex / this.#ofType.bytes;
-        
-        const lengthProp = this._b.meta.propsComputed.length;
-
-        this.#lengthType = lengthProp.type;
-
-        this.#lengthTypedArrayIndex = (this._b.index + lengthProp.offset) / lengthProp.type.bytes;
-
-    }
-
-    getUBoundIndex() {
-        let workingSpace = 0;
-
-        if(this._b.options !== null) {
-            workingSpace = this._b.options.workingSpace;
-        }
-
-        return this.#workingSpaceIndex + workingSpace;
-
-    }
-
-    get(index) {
-
-        return Buffifier.getInstance(Atomics.load(this.#ofType.typedArray, this.#workingSpaceTypedZeroIndex + index));
-
-
-        //return Buffifier.getRaw(this.#ofType, this.#workingSpaceTypedZeroIndex + index);
-    }
-    
-    async push(v) {
-
-        return new Promise((resolve) => {
-
-            this._b.lock().then(() => {
-
-                const length = Atomics.add(this.#lengthType.typedArray, this.#lengthTypedArrayIndex, 1) + 1;
-
-                Buffifier.setRaw(v, this.#ofType, (this.#workingSpaceTypedZeroIndex + length - 1))
-
-                resolve(length);
-
-                this._b.unlock();
-            });
-
-        });
-
-    }
-
-    
-    async toUnbufferedArray() {
-
-        return new Promise(async (resolve) => {
-
-            await this._b.lock();
-
-            const length = Atomics.load(this.#lengthType.typedArray, this.#lengthTypedArrayIndex);
-
-            const res = [];
-
-            for(let n = 0; n < length; n++) {
-                res.push(this.get(n));
-            }
-
-            resolve(res);
-
-            this._b.unlock();
-
-        });
-    }
-    
-
+    BufferedArray: 15,
+    MainThread: 16,
+    Renderer3DThread: 17,
+    EntityMoverThread: 18,
+    EntityZSetterThread: 19
 }
 
-export class RollingAverage {
-
-    #arr = null;
-    #sum = 0;
-
-    value = null;
-
-    constructor(length, fill = 0) {
-
-        this.#arr = new Array(length);
-
-        this.#arr.fill(fill);
-
-        for(const n of this.#arr) {
-            this.#sum += n;
-        }
-
-        this.value = this.#sum / this.#arr.length;
-
-    }
-
-    add(n) {
-        const popped = this.#arr.shift();
-        this.#arr.push(n);
-
-        this.#sum += n - popped;
-        this.value = this.#sum / this.#arr.length;
-    }
-}
-
-export class DataType {
+class DataType {
 
     typeByte = null;
-
-    name = null;
 
     bytes = null;
 
@@ -212,11 +75,13 @@ export class DataType {
         return n;
     }
 
-    constructor(typeByte, name) {
+    constructor(typeByte) {
 
         this.typeByte = typeByte;
-        this.name = name;
+
         this.referenceType = typeByte > 11;
+
+        // set how many bytes needed to store the data type
 
         if((typeByte > 5 && typeByte < 9) || typeByte > 11) {
             this.bytes = 4;
@@ -226,48 +91,50 @@ export class DataType {
             this.bytes = 1;
         } else if(typeByte > 8 && typeByte < 12) {
             this.bytes = 8;
-        } else {
-            throw new Error("Unknown typeByte");
         }
 
-        if(this.typeByte === 1) {
-            this.typedArray = Buffifier.uint8Array;
+        // set the typed array used for storing the data type
+        if(typeByte === 0) {
+            this.typedArray = MemorySystem.uint8Array;
+        } else if(typeByte === 1) {
+            this.typedArray = MemorySystem.uint8Array;
             this.getTransform = TypeConverter.intToBool;
             this.setTransform = TypeConverter.boolToInt;
-        } else if(this.typeByte === 2) {
-            this.typedArray = Buffifier.int8Array;
-        } else if(this.typeByte === 3) {
-            this.typedArray = Buffifier.uint8Array;
-        } else if(this.typeByte === 4) {
-            this.typedArray = Buffifier.int16Array;
-        } else if(this.typeByte === 5) {
-            this.typedArray = Buffifier.uint16Array;
-        } else if(this.typeByte === 6) {
-            this.typedArray = Buffifier.int32Array;
-        } else if(this.typeByte === 7) {
-            this.typedArray = Buffifier.uint32Array;
-        } else if(this.typeByte === 8) {
+        } else if(typeByte === 2) {
+            this.typedArray = MemorySystem.int8Array;
+        } else if(typeByte === 3) {
+            this.typedArray = MemorySystem.uint8Array;
+        } else if(typeByte === 4) {
+            this.typedArray = MemorySystem.int16Array;
+        } else if(typeByte === 5) {
+            this.typedArray = MemorySystem.uint16Array;
+        } else if(typeByte === 6) {
+            this.typedArray = MemorySystem.int32Array;
+        } else if(typeByte === 7) {
+            this.typedArray = MemorySystem.uint32Array;
+        } else if(typeByte === 8) {
             // float32 goes in uint32
-            this.typedArray = Buffifier.uint32Array;
+            this.typedArray = MemorySystem.uint32Array;
             this.getTransform = TypeConverter.uint32ToFloat32;
             this.setTransform = TypeConverter.float32ToUint32;
-        } else if(this.typeByte === 9) {
+        } else if(typeByte === 9) {
             // float64 goes in biguint64
-            this.typedArray = Buffifier.biguint64Array;
+            this.typedArray = MemorySystem.biguint64Array;
             this.getTransform = TypeConverter.uint64ToFloat64;
             this.setTransform = TypeConverter.float64ToUint64;
-        } else if(this.typeByte === 10) {
-            this.typedArray = Buffifier.bigint64Array;
-        } else if(this.typeByte === 11) {
-            this.typedArray = Buffifier.biguint64Array;
-        } else if(this.typeByte > 11) {
-            // reference objects
-            this.typedArray = Buffifier.uint32Array;
+        } else if(typeByte === 10) {
+            this.typedArray = MemorySystem.bigint64Array;
+        } else if(typeByte === 11) {
+            this.typedArray = MemorySystem.biguint64Array;
+        } else if(typeByte > 11) {
+            // reference objects are uint32 because it holds 
+            // the index of the object in the buffer
+            this.typedArray = MemorySystem.uint32Array;
         }
     }
 }
 
-export class TypeConverter {
+class TypeConverter {
 
     static buffer = new ArrayBuffer(8);
 
@@ -308,13 +175,78 @@ export class TypeConverter {
     static intToBool(n) {
         return n !== 0;
     }
+
 }
 
 export class Buffifier {
 
+    static rootObject = null;
+
+    static isMainThread = null;
+    
+    static async initFromWorker(sharedArrayBuffer, threadInstanceIndex, threadId, threadInitConfig) {
+
+        return new Promise((resolve) => {
+
+            this.isMainThread = false;
+
+            // use the passed in SharedArrayBuffer  
+            // because we are in a worker thread
+            MemorySystem.init(sharedArrayBuffer);
+
+            this.rootObject = MemorySystem.getInstance(MemorySystem.rootObjectIndex);
+
+            ThreadSystem.initFromWorker(threadId, threadInstanceIndex);
+
+            ThreadSystem.instance.init(this.rootObject, threadInitConfig).then(() => {
+                resolve();
+            });
+
+        });
+        
+    }
+
+    // params are strings
+    static init(rootClass, canvas, options) {
+
+        this.isMainThread = true;
+
+        const workingOptions = Object.assign({
+            allocate: 500000000, // allocates 500 MB for use (has to be evenly divisible by 8)
+            rootObjectWorkingSpace: 0 // used if rootClass is variable in size (e.g., BufferedArray)
+        }, options);
+
+        // create new SharedArrayBuffer because this is on the main thread
+        MemorySystem.init(new SharedArrayBuffer(workingOptions.allocate));
+
+        // create the root object
+        this.rootObject = MemorySystem.createInstance(rootClass, null, {
+            workingSpace: workingOptions.rootObjectWorkingSpace
+        });
+
+        ThreadSystem.init(ThreadSystem.threadIds.main);
+
+        // setTimeout without delay probably not needed, but here as a reminder
+        // that thread instances init() might need properties set before it's called.
+        setTimeout(WorkerSystem.init(canvas.transferControlToOffscreen()));
+
+        return this.rootObject;
+
+    }
+
+    // nice to have here to not expose MemorySystem
+    static createInstance(...args) {
+        return MemorySystem.createInstance(...args);
+    }
+
+}
+
+// TODO: fix BufferedArray so export isn't needed on MemorySystem
+export class MemorySystem {
+
     static buffer = null;
 
-    static typesArrays = null;
+    static rootObject = null;
 
     static int8Array = null;
     static uint8Array = null;
@@ -328,24 +260,17 @@ export class Buffifier {
     static bigint64Array = null;
     static biguint64Array = null;
 
-     // must be a multiple of 8 
-     // - [0-3] bytes is for next free block index
-     // - [4-7] is for signaling workers
-     // - [8-9] is for how many workers there are
-     // - [10-11] is for how much to allocate per worker
+    static metaDataIndices = {
+        freeIndex: 0, // uint32
+        rootObjectIndex: 1, // uint32
+        bytesAllocated: 2 // uint32
+    };
 
-     // #### #### #### #### #### ####
-    static metaDataByteLength = 16;
-
-    static signalIndex = 1;
-
-    static isMain = false;
-    
-    static workers = null;    
-    static workerMetaDataAllocate = null;
-   
-    static workerIndex = null;
-    static workerUint32IndexZero = null;
+    static objectMetaDataIndicesOffset = {
+        lock: 0, // int32
+        type: 4, // uint8
+        workingSpaceBytes: 2 // uint32
+    };
 
     static cache = {
         typesLookup: null,
@@ -353,66 +278,29 @@ export class Buffifier {
         instanceLookup: null
     };
 
-    static getFirstObject() {
-        return this.getInstance(this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate));
-    }
+    static threadMetaDataBytes = 8;
 
-    static signalWorkers() {
+    // [0-3] int32 locking/unlocking object
+    // [4] uint8 type byte
+    // [8-11] uint32 working space amount for variable sized objects (e.g., BufferedArray)
+    static objectMetaDataBytes = 12; 
 
-        const n1 = Atomics.compareExchange(this.int32Array, this.signalIndex, 0, 1);
-        
-        if(n1 !== 0) {
-            throw new Error("signalWorkers: Expected 0 on compareExchange. Got " + n1 + ".");
-        }
+    // must be a multiple of 8 
+    // [0-3] uint starting index of free space
+    // [4-7] uint starting index of root object
+    // [8-11] uint of total memory allocated in bytes
+    static metaDataBytes = 16;
 
-        const agentsAwoken = Atomics.notify(this.int32Array, this.signalIndex);
+    static rootObjectIndex = null;
 
-        const n2 = Atomics.compareExchange(this.int32Array, this.signalIndex, 1, 0);
+    static init(buffer) {
 
-        if(n2 !== 1){
-            throw new Error("signalWorkers: Expected 1 on compareExchange. Got " + n2 + ".");
-        }
+        // buffer is always a SharedArrayBuffer
 
-        return agentsAwoken;
-        
-    }
+        this.buffer = buffer;
 
-    static storeMetaData(val, index) {
+        // create all typed arrays with the same underlying buffer
 
-        // this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate)
-        if(this.isMain) {
-            throw new Error("Only workers can store meta data.")
-        }
-
-        Atomics.store(this.uint32Array, this.workerUint32IndexZero + index, Math.round(val));
-    }
-
-    static getWorkerMetaData(workerIndex, index) {
-
-        //if(!this.isMain) {
-        //    throw new Error("Only main thread can call getWorkerMetaData.")
-        //}
-
-        const workerUint32IndexZero = (this.metaDataByteLength / 4) + (workerIndex * (this.workerMetaDataAllocate / 4));
-
-        return Atomics.load(this.uint32Array, workerUint32IndexZero + index);
-    }
-
-    static init(classes, sharedArrayBuffer, options, workerIndex = -1) {
-
-        if(!sharedArrayBuffer) {
-            this.isMain = true;
-        }
-
-        const workingOptions = Object.assign({
-            allocate: 500000000 // allocates 500 MB for use (has to be evenly divisible by 8)
-        }, options);
-
-
-        // if given, use sharedArrayBuffer, else create new shared buffer array
-        this.buffer = (!sharedArrayBuffer ? new SharedArrayBuffer(workingOptions.allocate) : sharedArrayBuffer);
-
-        // create all the typed arrays with the same underlying buffer
         this.int8Array = new Int8Array(this.buffer);
         this.uint8Array = new Uint8Array(this.buffer);
 
@@ -425,36 +313,15 @@ export class Buffifier {
         this.bigint64Array = new BigInt64Array(this.buffer);
         this.biguint64Array = new BigUint64Array(this.buffer);
 
-        if(this.isMain) {
+        // concat all classes to one array for processing...
 
-            if(!("workers" in workingOptions)) {
-                throw new Error("Main thread needs to specify number of workers.");
-            }
-            
-            if(!("workerMetaDataAllocate" in workingOptions)) {
-                throw new Error("Main thread needs to specify how much to allocate for each worker.");
-            } else if(workingOptions.workerMetaDataAllocate % 8 !== 0) {
-                throw new Error("workerMetaDataAllocate needs to be a multiple of 8.");
-            }
+        const classesToProcess = config.classes.slice();
 
-            this.workers = workingOptions.workers;
-            this.workerMetaDataAllocate = workingOptions.workerMetaDataAllocate;
-
-            Atomics.store(this.uint16Array, 4, this.workers);
-            Atomics.store(this.uint16Array, 5, this.workerMetaDataAllocate);
-
-        } else {
-
-            this.workers = Atomics.load(this.uint16Array, 4);
-            this.workerMetaDataAllocate = Atomics.load(this.uint16Array, 5);
-
-            this.workerIndex = workerIndex;
-            
-            this.workerUint32IndexZero = (this.metaDataByteLength / 4) + (this.workerIndex * (this.workerMetaDataAllocate / 4));
-
-        }
-
-        
+        classesToProcess.push(
+            ...config.threads.main, 
+            ...config.threads.canvas, 
+            ...config.threads.others
+        );
 
         const dataTypesCount = Object.keys(DataTypes).length;
 
@@ -468,8 +335,7 @@ export class Buffifier {
         // ... indexed by the objects location (index) in the buffer
         this.cache.instanceLookup = new Array(this.buffer.byteLength);
 
-        const objectMetaBytes = 12; // [0-3] bytes is a lock/unlock, [4] byte is the type, [8-11] is working space amount
-
+        // sorting the entries by value because distrustful of consistent ordering
         const sortedDataTypes = Object.entries(DataTypes).sort((a, b) => {
             if (a[1] < b[1]) { return -1; }
             if (a[1] > b[1]) { return 1; }
@@ -480,7 +346,7 @@ export class Buffifier {
             this.cache.typesLookup[v] = new DataType(v, k);
         }
 
-        for (const cls of classes) {
+        for (const cls of classesToProcess) {
 
             const typeByte = DataTypes[cls.name];
 
@@ -491,7 +357,7 @@ export class Buffifier {
             meta.type = this.cache.typesLookup[typeByte];
 
             // allocate gets incremented later
-            meta.allocate = objectMetaBytes;
+            meta.allocate = this.objectMetaDataBytes;
 
             // stores prop names
             meta.propsLookup = [];
@@ -526,11 +392,94 @@ export class Buffifier {
 
         }
 
-        if(this.isMain) {
+        // rootObjectIndex is the first byte after meta data and thread meta data 
+        this.rootObjectIndex = this.metaDataBytes + (ThreadSystem.totalThreads * this.threadMetaDataBytes);
 
-            // mark first block as free block
-            Atomics.store(this.uint32Array, 0, this.metaDataByteLength + (this.workers * this.workerMetaDataAllocate));
+        if(Buffifier.isMainThread) {
+            
+            // explicit here for clarity
+            const freeIndex = this.rootObjectIndex;
 
+            // Buffifier.rootObject hasn't been created yet, but set the 
+            // freeIndex to the rootObjectIndex because the next 
+            // memory object created will be the root object
+            Atomics.store(this.uint32Array, this.metaDataIndices.freeIndex, freeIndex);
+
+            // store rootObjectIndex in memory so threads can access the root object
+            // TODO: storing this isn't necessary
+            Atomics.store(this.uint32Array, this.metaDataIndices.rootObjectIndex, this.rootObjectIndex);
+
+            // store how much buffer space we allocated for potential future use
+            Atomics.store(this.uint32Array, this.metaDataIndices.bytesAllocated, this.buffer.byteLength);
+
+        }
+
+    }
+
+    static createInstance(cls, values, options) {
+
+        const workingOptions = Object.assign({
+            workingSpace: 0
+        }, options);
+
+        const meta = cls._meta;
+
+        const objectBlockIndex = this.reserveFreeBlock(meta.allocate + workingOptions.workingSpace);
+
+        // since no thread at this point knows about objectBlockIndex except right here... 
+        // ... so we should be good to write at that location without issue
+
+        // objectBlockIndex is a multiple of 4 so hoping dividing by 4 gives an integer
+
+        this.int32Array[(objectBlockIndex / 4) + this.objectMetaDataIndicesOffset.lock] = 1; // mark as unlocked
+
+        this.uint8Array[objectBlockIndex + this.objectMetaDataIndicesOffset.type] = meta.type.typeByte; // add type byte
+
+        this.uint32Array[(objectBlockIndex / 4) + this.objectMetaDataIndicesOffset.workingSpaceBytes ] = workingOptions.workingSpace; // add working space size
+
+        // create vanilla instance
+        const instance = new cls();
+
+        this.configureInstance(instance, objectBlockIndex, meta, workingOptions);
+
+        if(!!values) {
+            // set any initial values
+            for (const [key, val] of Object.entries(values)) {
+                // prop can, but doesn't have to, point to a memory value
+                instance[key] = val;
+            }
+        }
+
+        if("onCreatedInstance" in instance) {
+            instance.onCreatedInstance();
+        }
+
+        return instance;
+
+    }
+
+    static configureInstance(instance, index, meta, options) {
+
+        // construct helper object...
+        const _b = {
+            index: index,
+            lastByteIndex: index + meta.allocate + options.workingSpace - 1,
+            blockSize: meta.allocate + options.workingSpace,
+            meta: meta,
+            options: options,
+            lock: this.lockObject.bind(instance),
+            unlock: this.unlockObject.bind(instance),
+        };
+
+        Object.defineProperty(instance, "_b", {
+            value: _b,
+            writable: false,
+            enumerable: false,
+            configurable: false
+        });
+
+        for(const propName of meta.propsLookup){
+            this.defineObjectProp(instance, propName);
         }
 
     }
@@ -598,9 +547,8 @@ export class Buffifier {
         if(type.referenceType){
                         
             const index = Atomics.load(type.typedArray, typedArrayValueIndex);
-            //const index = type.typedArray[typedArrayValueIndex];
 
-            return (index === 0 ? null : Buffifier.getInstance(index));
+            return (index === 0 ? null : MemorySystem.getInstance(index)); // TODO: see if this.getInstance works
 
         } else {
 
@@ -637,120 +585,229 @@ export class Buffifier {
 
         const typedArrayValueIndex = (o._b.index + props[prop].offset) / type.bytes;
 
-        //const typedArrayLockIndex = o._b.index / type.bytes;
-
         Object.defineProperty(o, prop, {
             enumerable: true,
             get() {
-                //if(!Buffifier.isMain) {
-                //    Atomics.wait(Buffifier.int32Array, typedArrayLockIndex, 2);
-                //}
-                return Buffifier.getRaw(type, typedArrayValueIndex);
+                return MemorySystem.getRaw(type, typedArrayValueIndex);
             },
             set(v) {
-                //if(!Buffifier.isMain) {
-                //    Atomics.wait(Buffifier.int32Array, typedArrayLockIndex, 2);
-                //}
-                Buffifier.setRaw(v, type, typedArrayValueIndex);
+                MemorySystem.setRaw(v, type, typedArrayValueIndex);
             }
-
         });
 
     }
 
     static async lockObject() {
-        return new Promise((resolve) => {
-            // 'this' is the object, not Buffifier
 
-            if (Atomics.compareExchange(Buffifier.int32Array, this._b.index / 4, 1, 2) !== 1) {
+        return new Promise((resolve) => {
+            // 'this' is the object, not MemorySystem
+            if (Atomics.compareExchange(MemorySystem.int32Array, this._b.index / 4, 1, 2) !== 1) {
                 // Promise apparently is never rejected according to MDN docs.
-                Atomics.waitAsync(Buffifier.int32Array, this._b.index / 4, 2, 2000).value.then((o) => {
+                Atomics.waitAsync(MemorySystem.int32Array, this._b.index / 4, 2, 2000).value.then((o) => {
                     resolve(o);
                 });
             } else {
                 resolve("not locked");
             }
         });
+
     }
 
     static unlockObject() {
-        // 'this' is the object, not Buffifier
 
-        if (Atomics.compareExchange(Buffifier.int32Array, this._b.index / 4, 2, 1) !== 2) {
+        // 'this' is the object, not MemorySystem
+
+        if (Atomics.compareExchange(MemorySystem.int32Array, this._b.index / 4, 2, 1) !== 2) {
             throw new Error("Trying to unlock an already unlocked object");
         }
 
-        Atomics.notify(Buffifier.int32Array, this._b.index / 4);
-
-    }
-
-    static configureInstance(instance, index, meta, options) {
-
-        // construct helper object...
-        const _b = {
-            index: index,
-            lastByteIndex: index + meta.allocate + options.workingSpace - 1,
-            blockSize: meta.allocate + options.workingSpace,
-            meta: meta,
-            options: options,
-            lock: this.lockObject.bind(instance),
-            unlock: this.unlockObject.bind(instance),
-        };
-
-        Object.defineProperty(instance, "_b", {
-            value: _b,
-            writable: false,
-            enumerable: false,
-            configurable: false
-        });
-
-        for(const propName of meta.propsLookup){
-            this.defineObjectProp(instance, propName);
-        }
-
-    }
-
-    static createInstance(cls, values, options) {
-
-        const workingOptions = Object.assign({
-            workingSpace: 0
-        }, options);
-
-        const meta = cls._meta;
-
-        const objectBlockIndex = this.reserveFreeBlock(meta.allocate + workingOptions.workingSpace);
-
-        // since no thread at this point knows about objectBlockIndex except right here... 
-        // ... so we should be good to write at that location without issue
-
-        // objectBlockIndex is a multiple of 4 so hoping dividing by 4 gives an integer
-
-        this.int32Array[objectBlockIndex / 4] = 1; // mark as unlocked
-
-        this.uint8Array[objectBlockIndex + 4] = meta.type.typeByte; // add type byte
-
-        this.uint32Array[(objectBlockIndex + 8) / 4] = workingOptions.workingSpace; // add working space size
-
-        // create vanilla instance
-        const instance = new cls();
-
-        this.configureInstance(instance, objectBlockIndex, meta, workingOptions);
-
-        if(!!values) {
-            // set any initial values
-            for (const [key, val] of Object.entries(values)) {
-                // no need for respecting the lock here, but it does anyway
-                instance[key] = val;
-            }
-        }
-
-        if("onCreatedInstance" in instance) {
-            instance.onCreatedInstance();
-        }
-
-        return instance;
-
+        Atomics.notify(MemorySystem.int32Array, this._b.index / 4);
 
     }
 
 }
+
+export class WorkerSystem {
+
+    static messages = {
+        LOADED: "loaded",
+        INIT: "init",
+        READY: "ready"
+    };
+
+    static workers = [];
+
+    static init(offscreenCanvas) {
+
+        for(const instance of ThreadSystem.threadInstances) {
+
+            const threadId = instance.threadId;
+
+            // if not main thread instance
+            if(threadId > 0) {
+
+                const isCanvasThread = (threadId === 1);
+
+                const workerItem = {
+                    ready: false,
+                    instance: new Worker("worker.js", { type: "module" }),
+                    threadId: threadId,
+                    threadInstance: instance,
+                    threadInstanceConfig: isCanvasThread ? {
+                        canvas: offscreenCanvas,
+                        devicePixelRatio: globalThis.devicePixelRatio
+                    } : {},
+                    transferObjects: isCanvasThread ? [offscreenCanvas] : undefined
+                };
+
+                this.rigWorkerItem(workerItem);
+
+                this.workers.push(workerItem);
+            }
+        }
+
+        let intervalId = setInterval(() => {
+            if(this.workers.every((w) => w.ready)) {
+                clearInterval(intervalId);
+                this.onWorkersReady();
+            }
+        }, 300);
+
+    }
+
+    static rigWorkerItem(worker) {
+
+        worker.instance.addEventListener("message", async ({ data }) => {
+        
+            if(data[0] === this.messages.LOADED) {
+    
+                worker.instance.postMessage([
+                    this.messages.INIT, 
+                    worker.threadInstance._b.index, 
+                    worker.threadId,
+                    worker.threadInstanceConfig,
+                    MemorySystem.buffer, 
+                    worker.transferObjects
+                ], worker.transferObjects);
+
+            } else if (data[0] === this.messages.READY) {
+
+                worker.ready = true;
+
+            }
+
+        });
+
+    }
+
+    static onWorkersReady () {
+        console.log("workers ready!!!");
+    }
+
+    static onWorkerReceiveMessage = async ({ data }) => {
+
+        if(data[0] === this.messages.INIT) {
+
+            const threadInstanceIndex = data[1];
+            const threadId = data[2];
+            const threadInitConfig = data[3];
+            const sharedArrayBuffer = data[4];
+
+            await Buffifier.initFromWorker(sharedArrayBuffer, threadInstanceIndex, threadId, threadInitConfig);
+
+            postMessage([this.messages.READY]);
+    
+            console.log("from worker: i'm ready!");
+    
+        }
+        
+    }
+
+}
+
+class ThreadSystem {
+
+    static instance = null;
+
+    static totalThreads = 
+        config.threads.main.length + 
+        config.threads.canvas.length + 
+        config.threads.others.length
+    ;
+
+    static currentThreadId = null;
+
+    static threadIds = {
+        main: 0,
+        canvas: 1
+    };
+
+    static threadInstances = null;
+
+    // TODO: Add methods to load/store thread instance meta data
+
+    static initFromWorker(threadId, threadInstanceIndex) {
+
+        this.currentThreadId = threadId;
+
+        this.instance = MemorySystem.getInstance(threadInstanceIndex);
+
+    }
+
+    static init(threadId) {
+
+        this.currentThreadId = threadId;
+
+        const threadClass = this.getThreadClassById(threadId);
+
+        this.instance = MemorySystem.createInstance(threadClass, { threadId });
+            
+        if(this.threadIds.main === threadId) {
+
+            // since we are on the main thread, we create all other thread 
+            // instances here so workers can load the one they are
+            // assigned via postMessage -> MemorySystem.getInstance
+
+            this.threadInstances = new Array(this.totalThreads);
+
+            // add already created main instance
+            this.threadInstances[this.threadIds.main] = this.instance;
+
+            // create canvas thread instance
+            this.threadInstances[this.threadIds.canvas] = 
+                MemorySystem.createInstance(this.getThreadClassById(this.threadIds.canvas), {
+                    threadId: this.threadIds.canvas
+                });
+               
+            let n = 2;
+            
+            // create the others
+            for(const cls of config.threads.others) {
+                this.threadInstances[n] = MemorySystem.createInstance(cls, {
+                    threadId: n
+                });
+                n++;
+            }
+
+            this.instance.init(this.rootObject);
+
+        }
+
+    }
+
+    static getThreadClassById(threadId) {
+
+        if(threadId === 0) {
+            return config.threads.main[0];
+        } else if(threadId === 1) {
+            return config.threads.canvas[0];
+        } else if(threadId > 1) {
+            return config.threads.others[threadId - 2];
+        }
+
+    }
+    
+}
+
+
+

@@ -1,19 +1,24 @@
 import * as THREE from '../three/three.module.js';
 import { OrbitControlsModified } from '../three/addons/controls/OrbitControlsModified.js';
-import { CSM } from '../three/addons/csm/CSM.js';
+import { DataTypes } from "../Buffifier.js";
+import { BaseThread } from "./Base.js";
 
-//export { ImprovedNoise } from 'three/addons/math/ImprovedNoise.js';
-//export { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
-//export { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-//export { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-//export { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
-//export { OBB } from 'three/addons/math/OBB.js';
-//export { SimplifyModifier } from 'three/addons/modifiers/SimplifyModifier.js';
-//export * as SkeletonUtils from 'three/addons/utils/SkeletonUtils.js';
+export class Renderer3DThread extends BaseThread {
 
-export class Renderer3DWorker {
+    static _meta = {
 
-    state = null;
+        get props() { 
+
+            return {
+                threadId: DataTypes.Uint8,
+                test1: DataTypes.Uint32
+            }
+
+        }
+
+    };
+
+    app = null;
 
     world = null;
 
@@ -37,37 +42,35 @@ export class Renderer3DWorker {
 
     csm = null;
 
-    lastFrameStateData = null;
+    lastFrameAppData = null;
 
-    init = async (state, config) => {
+    init = async (app, config) => {
 
         return new Promise(async (resolve) => {
 
-            console.log("Renderer3DWorker init", state, config);
+            this.app = app;
 
-            this.state = state;
+            this.lastFrameAppData = {
 
-            this.lastFrameStateData = {
+                mouseX: this.app.mouseX,
+                mouseY: this.app.mouseY,
 
-                mouseX: this.state.mouseX,
-                mouseY: this.state.mouseY,
-
-                mouseDown: this.state.mouseDown,
+                mouseDown: this.app.mouseDown,
                 
-                keyWDown: this.state.keyWDown,
-                keyADown: this.state.keyADown,
-                keySDown: this.state.keySDown,
-                keyDDown: this.state.keyDDown,
+                keyWDown: this.app.keyWDown,
+                keyADown: this.app.keyADown,
+                keySDown: this.app.keySDown,
+                keyDDown: this.app.keyDDown,
 
 
-                mouseWheelDeltaY: this.state.mouseWheelDeltaY
+                mouseWheelDeltaY: this.app.mouseWheelDeltaY
 
             };
 
-            this.canvasWidth = this.state.canvasWidth;
-            this.canvasHeight = this.state.canvasHeight;
+            this.canvasWidth = this.app.canvasWidth;
+            this.canvasHeight = this.app.canvasHeight;
 
-            this.world = this.state.world;
+            this.world = this.app.world;
 
             this.worldItems = this.world.items;
 
@@ -151,17 +154,17 @@ export class Renderer3DWorker {
             // this.controls.enableDamping = true;
             this.controls.maxPolarAngle = Math.PI / 2;
             this.controls.target = new THREE.Vector3(0, 0, 0);
-            
 
-            //this.world = await new WorldEntity3D(this.root).init(this.config.world);
-
-            
             const axesHelper = new THREE.AxesHelper(500);
 
             axesHelper.position.y = 0.01;
             this.scene.add(axesHelper);
 
             this.renderer.render(this.scene, this.camera);
+
+            setTimeout(() => {
+                this.work();
+            }, 5);
 
             resolve();
         });
@@ -171,8 +174,8 @@ export class Renderer3DWorker {
 
         return new Promise(async (resolve) => {
 
-            const w = this.state.canvasWidth;
-            const h = this.state.canvasHeight;
+            const w = this.app.canvasWidth;
+            const h = this.app.canvasHeight;
 
             if(w !== this.canvasWidth || h !== this.canvasHeight) {
                 this.canvasWidth = w;
@@ -180,50 +183,50 @@ export class Renderer3DWorker {
                 this.onCanvasSizeChange();
             }
 
-            const currentFrameStateData = {
+            const currentFrameAppData = {
 
-                mouseX: this.state.mouseX,
-                mouseY: this.state.mouseY,
+                mouseX: this.app.mouseX,
+                mouseY: this.app.mouseY,
 
-                mouseDown: this.state.mouseDown,
+                mouseDown: this.app.mouseDown,
 
-                keyWDown: this.state.keyWDown,
-                keyADown: this.state.keyADown,
-                keySDown: this.state.keySDown,
-                keyDDown: this.state.keyDDown,
+                keyWDown: this.app.keyWDown,
+                keyADown: this.app.keyADown,
+                keySDown: this.app.keySDown,
+                keyDDown: this.app.keyDDown,
 
-                mouseWheelDeltaY: this.state.mouseWheelDeltaY
+                mouseWheelDeltaY: this.app.mouseWheelDeltaY
 
             }
 
 
-            if(currentFrameStateData.mouseDown > 0 && this.lastFrameStateData.mouseDown === 0) {
+            if(currentFrameAppData.mouseDown > 0 && this.lastFrameAppData.mouseDown === 0) {
 
 
                 this.controls.onMouseDown({
-                    button: currentFrameStateData.mouseDown - 1,
-                    clientX: currentFrameStateData.mouseX,
-                    clientY: currentFrameStateData.mouseY
+                    button: currentFrameAppData.mouseDown - 1,
+                    clientX: currentFrameAppData.mouseX,
+                    clientY: currentFrameAppData.mouseY
                 });
-            } else if(currentFrameStateData.mouseDown === 0 && this.lastFrameStateData.mouseDown > 0) {
+            } else if(currentFrameAppData.mouseDown === 0 && this.lastFrameAppData.mouseDown > 0) {
 
                 this.controls.onPointerUp();
 
-            } else if(currentFrameStateData.mouseWheelDeltaY !== this.lastFrameStateData.mouseWheelDeltaY) {
+            } else if(currentFrameAppData.mouseWheelDeltaY !== this.lastFrameAppData.mouseWheelDeltaY) {
 
                 this.controls.onMouseWheel({
-                    deltaY: currentFrameStateData.mouseWheelDeltaY,
-                    clientX: currentFrameStateData.mouseX,
-                    clientY: currentFrameStateData.mouseY
+                    deltaY: currentFrameAppData.mouseWheelDeltaY,
+                    clientX: currentFrameAppData.mouseX,
+                    clientY: currentFrameAppData.mouseY
                 });
             }
 
-            if(currentFrameStateData.mouseX !== this.lastFrameStateData.mouseX || currentFrameStateData.mouseY !== this.lastFrameStateData.mouseY) {
+            if(currentFrameAppData.mouseX !== this.lastFrameAppData.mouseX || currentFrameAppData.mouseY !== this.lastFrameAppData.mouseY) {
                 
                 this.controls.onMouseMove({
                     pointer: 0,
-                    clientX: currentFrameStateData.mouseX,
-                    clientY: currentFrameStateData.mouseY
+                    clientX: currentFrameAppData.mouseX,
+                    clientY: currentFrameAppData.mouseY
                 });
             }
 
@@ -260,9 +263,9 @@ export class Renderer3DWorker {
             
 
 
-            this.state.mouseWheelDeltaY = 0;
+            this.app.mouseWheelDeltaY = 0;
 
-            this.lastFrameStateData = currentFrameStateData;
+            this.lastFrameAppData = currentFrameAppData;
 
             // no idea why settimeout fixes the issue
             setTimeout(resolve);

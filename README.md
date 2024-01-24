@@ -5,3 +5,4 @@
 - Data is stored/loaded to/from the SharedArrayBuffer safely via Atomics.
 - For large object operations, you can lock the object manually during the process.
 - Supports Float32/Float64 by converting them to Uint32/BigUint64 before calling store/load
+- Buffifier.js is the meat and potatoes

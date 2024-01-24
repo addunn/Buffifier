@@ -8,17 +8,20 @@ export class Entity {
 
     static _meta = {
 
-        props: {
+        get props() { 
 
-            x: DataTypes.Float64,
-            y: DataTypes.Float64,
-            z: DataTypes.Float64,
+            return {
+                
+                x: DataTypes.Float64,
+                y: DataTypes.Float64,
+                z: DataTypes.Float64,
 
-            speed: DataTypes.Float32,
+                speed: DataTypes.Float32,
 
-            screenX: DataTypes.Int32,
-            screenY: DataTypes.Int32,
-            cameraDistance: DataTypes.Float32
+                screenX: DataTypes.Int32,
+                screenY: DataTypes.Int32,
+                cameraDistance: DataTypes.Float32
+            }
 
         }
 

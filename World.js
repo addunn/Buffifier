@@ -17,9 +17,10 @@ export class World {
     }
 
     static _meta = {
-
-        props: {
-            items: DataTypes.ArrayObject
+        get props() {
+            return {
+                items: DataTypes.BufferedArray
+            }
         }
 
     };
