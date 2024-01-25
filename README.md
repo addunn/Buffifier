@@ -1,14 +1,36 @@
 # Buffifier
 Currently a work in progress. 
 
-Buffifier is a framework that hopefully helps solve the problem of having to communicate large amounts of data to multiple web workers with low latency. This is accomplished with SharedArrayBuffer, Atomics, and intercepting object properties via setters/getters. It tries to be as minimally invasive as possible by not requiring you to change much of your app.
+Buffifier is a framework that hopefully helps solve the problem of having to communicate large amounts of data to multiple web workers with low latency. This is accomplished with SharedArrayBuffer, Atomics, and intercepting object properties via setters/getters. It tries to be as minimally invasive as possible by not requiring you to change much of your app. This repository is a minimal example of how to use the framework. The "meat and potatoes" is in Buffifier.js, and ideally that is the only file you will need to include Buffifier in your app.
 
 ---
 
+**How to see it in action:**
 
-How to set up a class so instances are shared across web workers:
+Download/clone this repository.
 
-(_work in progress, instructions are incomplete_) 
+Run this command in the same folder to start a simple web server: ``py -3 -m secure_server``
+
+Alternatively, setup any simple web server that serves the files with these response headers:
+
+```
+Cross-Origin-Opener-Policy: same-origin 
+Cross-Origin-Embedder-Policy: require-corp
+```
+
+Headers required for SharedArrayBuffer and something else fancy (I forget).
+
+Navigate to the http://localhost:8000, and you should see something like this:
+
+<img width="374" src="https://github.com/addunn/Buffifier/assets/43220218/cfda5f87-ffd1-4eda-8c1f-4e537766eada">
+
+(_it's a work in progress, so it only runs the code for now_)
+
+---
+
+**How to set up a class so instances are shared across web workers:**
+
+(_instructions are incomplete_) 
 
 ### RootClass.js
 ```javascript
