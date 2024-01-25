@@ -1,7 +1,7 @@
 # Buffifier
 Currently a work in progress. 
 
-Buffifier is a framework that hopefully helps solve the problem of having to communicate large amounts of data to multiple web workers with low latency. This is accomplished with SharedArrayBuffer, Atomics, and intercepting object properties via setters/getters. It tries to be as minimally invasive as possible by not requiring you to change much of your app. This repository is a minimal example to demonstrate and how to use the framework. The "meat and potatoes" is in Buffifier.js, and ideally, that is the only file you will need to include in your app.
+Buffifier is a framework that hopefully helps solve the problem of having to communicate large amounts of data to multiple web workers with low latency. This is accomplished with SharedArrayBuffer, Atomics, and intercepting object properties via setters/getters. It tries to be as minimally invasive as possible by not requiring you to change much of your app. This repository is a minimal example that will demonstrate its capabilities, and will show you how to use the framework. The "meat and potatoes" is in Buffifier.js, and ideally, that is the only file you will need to include in your app.
 
 ---
 
