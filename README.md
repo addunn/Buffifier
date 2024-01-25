@@ -18,7 +18,7 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-Headers required for SharedArrayBuffer and something else fancy (I forget).
+Headers are required for SharedArrayBuffer and higher accuracy with performance.now().
 
 Navigate to the http://localhost:8000, and you should see something like this:
 
