@@ -8,7 +8,7 @@ Buffifier is a framework that hopefully helps solve the problem of having to com
 
 How to set up a class so instances are shared across web workers:
 
-(_work in progress, so instructions are incomplete_) 
+(_work in progress, instructions are incomplete_) 
 
 ### RootClass.js
 ```javascript
