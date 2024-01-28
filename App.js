@@ -11,16 +11,12 @@ export class App {
 
                 mouseDown: DataTypes.Uint8,
 
-                keyWDown:  DataTypes.boolean,
-                keyADown:  DataTypes.boolean,
-                keySDown:  DataTypes.boolean,
-                keyDDown:  DataTypes.boolean,
-
                 mouseWheelDeltaY: DataTypes.Int16,
 
                 canvasWidth: DataTypes.Uint16,
                 canvasHeight: DataTypes.Uint16,
 
+                mouseOverEntityIndices: DataTypes.BufferedArray,
                 world: DataTypes.World
             }
             

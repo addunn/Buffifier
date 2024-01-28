@@ -1,19 +1,22 @@
+
 import { MainThread } from "./threads/Main.js";
-import { Renderer3DThread } from "./threads/Renderer3D.js";
-import { EntityMoverThread } from "./threads/EntityMover.js";
-import { EntityZSetterThread } from "./threads/EntityZSetter.js";
+import { RendererThread } from "./threads/Renderer.js";
+import { EntityThread } from "./threads/Entity.js";
+import { TerrainThread } from "./threads/Terrain.js";
+import { PathingThread } from "./threads/Pathing.js";
+
 
 import { App } from "./App.js";
 import { World } from "./World.js";
 import { Entity } from "./Entity.js";
-import { BufferedArray } from "./BufferedArray.js";
+
+
 
 const config = {
     classes: [
         App,
         World,
-        Entity,
-        BufferedArray
+        Entity
     ],
     threads: {
         main: [ 
@@ -22,18 +25,18 @@ const config = {
         ],
         canvas: [ 
             // only one canvas thread class currently supported
-            Renderer3DThread
+            RendererThread
         ],
         others: [
-            EntityMoverThread, 
-            EntityZSetterThread
+            EntityThread, 
+            TerrainThread,
+            PathingThread
         ]
     }
 };
 
-
-
 export const DataTypes = {
+
     null: 0,
     boolean: 1,
     Int8: 2,
@@ -46,16 +49,124 @@ export const DataTypes = {
     Float64: 9,
     BigInt64: 10,
     BigUint64: 11,
-    // ### begin config.classes... ###
-    App: 12,
-    World: 13,
-    Entity: 14,
-    BufferedArray: 15,
-    MainThread: 16,
-    Renderer3DThread: 17,
-    EntityMoverThread: 18,
-    EntityZSetterThread: 19
+    BufferedArray: 12
+    // classes from config automatically added here
+    
 }
+
+
+
+export class BufferedArray {
+
+    constructor() {
+
+        Object.defineProperty(this, "_a", {
+            value: {},
+            writable: false,
+            enumerable: false,
+            configurable: false
+        });
+
+    }
+
+    static _meta = {
+        get props() {
+            return {
+                of: DataTypes.Uint8,
+                length: DataTypes.Uint32
+            }
+        }
+    };
+    
+    getReferenceType(index) {
+        return MemorySystem.getReferenceType(this._a.ofType, this._a.typedZeroIndex + index);
+    }
+
+    getPrimitiveType(index) {
+        return MemorySystem.getPrimitiveType(this._a.ofType, this._a.typedZeroIndex + index);
+    }
+
+    setReferenceType(index, v) {
+        return MemorySystem.setReferenceType(v, this._a.ofType, this._a.typedZeroIndex + index);
+    }
+
+    setPrimitiveType(index, v) {
+        return MemorySystem.setPrimitiveType(v, this._a.ofType, this._a.typedZeroIndex + index);
+    }
+
+    [Symbol.iterator]() {
+
+        let index = 0;
+
+        return {
+            next: () => {
+                if (index < this.length) {
+                    return { 
+                        value: this.at(index++), 
+                        done: false 
+                    };
+                } else {
+                    return { 
+                        done: true 
+                    };
+                }
+            },
+        };
+    }
+
+    onCreatedInstance() {
+
+
+        const ofProp = this._b.meta.propsComputed.of;
+
+        const ofTypedArrayIndex = (this._b.index + ofProp.offset) / ofProp.type.bytes;
+
+        const ofVal = Atomics.load(ofProp.type.typedArray, ofTypedArrayIndex);
+
+        this._a.ofType = MemorySystem.cache.typesLookup[ofVal];
+        
+        const currentWorkingSpaceIndex = this._b.index + this._b.meta.allocate;
+
+        const remainder = (this._b.index + this._b.meta.allocate) % this._a.ofType.bytes;
+
+        const additionalOffset = remainder === 0 ? remainder : (this._a.ofType.bytes - remainder);
+
+        const workingSpaceIndex = currentWorkingSpaceIndex + additionalOffset;
+
+        this._a.typedZeroIndex = workingSpaceIndex / this._a.ofType.bytes;
+        
+        const lengthProp = this._b.meta.propsComputed.length;
+
+        this._a.lengthType = lengthProp.type;
+
+        this._a.lengthTypedArrayIndex = (this._b.index + lengthProp.offset) / lengthProp.type.bytes;
+
+        if(this._a.ofType.referenceType) {
+            this.at = this.getReferenceType;
+            this.set = this.setReferenceType;
+        } else {
+            this.at = this.getPrimitiveType;
+            this.set = this.setPrimitiveType;
+        }
+    }
+    
+    at = () => undefined;
+
+    set = () => undefined;
+
+    push(v) {
+
+
+        const length = Atomics.add(this._a.lengthType.typedArray, this._a.lengthTypedArrayIndex, 1) + 1;
+
+        MemorySystem.setRaw(v, this._a.ofType, (this._a.typedZeroIndex + length - 1))
+
+        return length;
+
+    }
+
+}
+
 
 class DataType {
 
@@ -178,71 +289,8 @@ class TypeConverter {
 
 }
 
-export class Buffifier {
 
-    static rootObject = null;
-
-    static isMainThread = null;
-    
-    static async initFromWorker(sharedArrayBuffer, threadInstanceIndex, threadId, threadInitConfig) {
-
-        return new Promise((resolve) => {
-
-            this.isMainThread = false;
-
-            // use the passed in SharedArrayBuffer  
-            // because we are in a worker thread
-            MemorySystem.init(sharedArrayBuffer);
-
-            this.rootObject = MemorySystem.getInstance(MemorySystem.rootObjectIndex);
-
-            ThreadSystem.initFromWorker(threadId, threadInstanceIndex);
-
-            ThreadSystem.instance.init(this.rootObject, threadInitConfig).then(() => {
-                resolve();
-            });
-
-        });
-        
-    }
-
-    // params are strings
-    static init(rootClass, canvas, options) {
-
-        this.isMainThread = true;
-
-        const workingOptions = Object.assign({
-            allocate: 500000000, // allocates 500 MB for use (has to be evenly divisible by 8)
-            rootObjectWorkingSpace: 0 // used if rootClass is variable in size (e.g., BufferedArray)
-        }, options);
-
-        // create new SharedArrayBuffer because this is on the main thread
-        MemorySystem.init(new SharedArrayBuffer(workingOptions.allocate));
-
-        // create the root object
-        this.rootObject = MemorySystem.createInstance(rootClass, null, {
-            workingSpace: workingOptions.rootObjectWorkingSpace
-        });
-
-        ThreadSystem.init(ThreadSystem.threadIds.main);
-
-        // setTimeout without delay probably not needed, but here as a reminder
-        // that thread instances init() might need properties set before it's called.
-        setTimeout(WorkerSystem.init(canvas.transferControlToOffscreen()));
-
-        return this.rootObject;
-
-    }
-
-    // nice to have here to not expose MemorySystem
-    static createInstance(...args) {
-        return MemorySystem.createInstance(...args);
-    }
-
-}
-
-// TODO: fix BufferedArray so export isn't needed on MemorySystem
-export class MemorySystem {
+class MemorySystem {
 
     static buffer = null;
 
@@ -262,8 +310,8 @@ export class MemorySystem {
 
     static metaDataIndices = {
         freeIndex: 0, // uint32
-        rootObjectIndex: 1, // uint32
-        bytesAllocated: 2 // uint32
+        bytesAllocated: 1, // uint32
+        workersSignal: 2, // int32
     };
 
     static objectMetaDataIndicesOffset = {
@@ -286,9 +334,9 @@ export class MemorySystem {
     static objectMetaDataBytes = 12; 
 
     // must be a multiple of 8 
-    // [0-3] uint starting index of free space
-    // [4-7] uint starting index of root object
-    // [8-11] uint of total memory allocated in bytes
+    // [0-3] uint32 starting index of free space
+    // [4-7] uint32 of total memory allocated in bytes
+    // [8-11] int32 signal for workers
     static metaDataBytes = 16;
 
     static rootObjectIndex = null;
@@ -318,12 +366,26 @@ export class MemorySystem {
         const classesToProcess = config.classes.slice();
 
         classesToProcess.push(
+            BufferedArray,
             ...config.threads.main, 
             ...config.threads.canvas, 
             ...config.threads.others
         );
 
-        const dataTypesCount = Object.keys(DataTypes).length;
+        classesToProcess.sort((a, b) => {
+            if (a.name < b.name) { return -1; }
+            if (a.name > b.name) { return 1; }
+            throw new Error("Expected unique classes.");
+        });
+
+        console.log(classesToProcess);
+        let dataTypesCount = Object.keys(DataTypes).length;
+
+        // add custom classes to DataTypes
+        for (const cls of classesToProcess) {
+            DataTypes[cls.name] = dataTypesCount;
+            dataTypesCount++;
+        }
 
         // stores DataType instances in an array indexed by type byte
         this.cache.typesLookup = new Array(dataTypesCount);
@@ -333,7 +395,7 @@ export class MemorySystem {
 
         // stores instances of objects that are backed by the buffer...
         // ... indexed by the objects location (index) in the buffer
-        this.cache.instanceLookup = new Array(this.buffer.byteLength);
+        this.cache.instanceLookup = new Map(); // new Array(this.buffer.byteLength);
 
         // sorting the entries by value because distrustful of consistent ordering
         const sortedDataTypes = Object.entries(DataTypes).sort((a, b) => {
@@ -405,10 +467,6 @@ export class MemorySystem {
             // memory object created will be the root object
             Atomics.store(this.uint32Array, this.metaDataIndices.freeIndex, freeIndex);
 
-            // store rootObjectIndex in memory so threads can access the root object
-            // TODO: storing this isn't necessary
-            Atomics.store(this.uint32Array, this.metaDataIndices.rootObjectIndex, this.rootObjectIndex);
-
             // store how much buffer space we allocated for potential future use
             Atomics.store(this.uint32Array, this.metaDataIndices.bytesAllocated, this.buffer.byteLength);
 
@@ -466,9 +524,9 @@ export class MemorySystem {
             lastByteIndex: index + meta.allocate + options.workingSpace - 1,
             blockSize: meta.allocate + options.workingSpace,
             meta: meta,
-            options: options,
-            lock: this.lockObject.bind(instance),
-            unlock: this.unlockObject.bind(instance),
+            options: options//,
+            //lock: this.lockObject.bind(instance),
+            //unlock: this.unlockObject.bind(instance),
         };
 
         Object.defineProperty(instance, "_b", {
@@ -503,7 +561,7 @@ export class MemorySystem {
 
         // Atomics.add() returns the old value before addition.
         // That value is the next free block index.
-        return Atomics.add(this.uint32Array, 0, (allocate + (8 - remainder)) + 8 - 8); // TODO: figure out why you saw lastByteIndex to be the same as the next block index
+        return Atomics.add(this.uint32Array, 0, (allocate + (8 - remainder)));
 
     }
 
@@ -535,44 +593,62 @@ export class MemorySystem {
 
     static getInstance(index) {
 
-        if(this.cache.instanceLookup[index] === undefined) {
-            this.cache.instanceLookup[index] = this.newInstanceFromIndex(index);
+        if(this.cache.instanceLookup.has(index)) {
+
+            return this.cache.instanceLookup.get(index);
+            
+        } else {
+            const o = this.newInstanceFromIndex(index);
+            this.cache.instanceLookup.set(index, o);
+            return o;
         }
 
-        return this.cache.instanceLookup[index];
+        //if(this.cache.instanceLookup[index] === undefined) {
+        //    this.cache.instanceLookup[index] = this.newInstanceFromIndex(index);
+        //}
+
+        //return this.cache.instanceLookup[index];
+
     }
 
-    static getRaw(type, typedArrayValueIndex) {
+    static getReferenceType(type, typedArrayValueIndex) {
+        const index = Atomics.load(type.typedArray, typedArrayValueIndex);
+        return (index === 0 ? null : this.getInstance(index));
+    }
 
-        if(type.referenceType){
-                        
-            const index = Atomics.load(type.typedArray, typedArrayValueIndex);
+    static getPrimitiveType(type, typedArrayValueIndex) {
+        return (type.getTransform(Atomics.load(type.typedArray, typedArrayValueIndex)));
+    }
 
-            return (index === 0 ? null : MemorySystem.getInstance(index)); // TODO: see if this.getInstance works
+    static setReferenceType(v, type, typedArrayValueIndex) {
+
+        if(v === null) {
+
+            Atomics.store(type.typedArray, typedArrayValueIndex, 0);
 
         } else {
 
-            return (type.getTransform(Atomics.load(type.typedArray, typedArrayValueIndex)));
+            Atomics.store(type.typedArray, typedArrayValueIndex, v._b.index);
 
         }
+
     }
+
+    static setPrimitiveType(v, type, typedArrayValueIndex) {
+
+        Atomics.store(type.typedArray, typedArrayValueIndex, type.setTransform(v));
+
+    }
+
+
     static setRaw(v, type, typedArrayValueIndex) {
 
         if(type.referenceType){
 
-            if(v === null) {
-
-                Atomics.store(type.typedArray, typedArrayValueIndex, 0);
-
-            } else {
-
-                Atomics.store(type.typedArray, typedArrayValueIndex, v._b.index);
-
-            }
+            this.setReferenceType(v, type, typedArrayValueIndex);
             
         } else {
-
-            Atomics.store(type.typedArray, typedArrayValueIndex, type.setTransform(v));
+            this.setPrimitiveType(v, type, typedArrayValueIndex);
 
         }
 
@@ -583,20 +659,36 @@ export class MemorySystem {
 
         const type = props[prop].type;
 
+        
         const typedArrayValueIndex = (o._b.index + props[prop].offset) / type.bytes;
 
-        Object.defineProperty(o, prop, {
-            enumerable: true,
-            get() {
-                return MemorySystem.getRaw(type, typedArrayValueIndex);
-            },
-            set(v) {
-                MemorySystem.setRaw(v, type, typedArrayValueIndex);
-            }
-        });
+        if(type.referenceType) {
 
+            Object.defineProperty(o, prop, {
+                enumerable: true,
+                get() {
+                    return MemorySystem.getReferenceType(type, typedArrayValueIndex);
+                },
+                set(v) {
+                    MemorySystem.setReferenceType(v, type, typedArrayValueIndex);
+                }
+            });
+
+        } else {
+
+            Object.defineProperty(o, prop, {
+                enumerable: true,
+                get() {
+                    return MemorySystem.getPrimitiveType(type, typedArrayValueIndex);
+                },
+                set(v) {
+                    MemorySystem.setPrimitiveType(v, type, typedArrayValueIndex);
+                }
+            });
+
+        }
     }
-
+    /*
     static async lockObject() {
 
         return new Promise((resolve) => {
@@ -624,6 +716,118 @@ export class MemorySystem {
         Atomics.notify(MemorySystem.int32Array, this._b.index / 4);
 
     }
+    */
+
+}
+
+
+
+export class Buffifier {
+
+    static rootObject = null;
+
+    static isMainThread = null;
+    
+    static start() {
+        this.tick = this.tock;
+        this.tick();
+    }
+
+    static tick = () => undefined;
+
+    static signalWorkers() {
+
+        const signalIndex = MemorySystem.metaDataIndices.workersSignal;
+        const n1 = Atomics.compareExchange(MemorySystem.int32Array, signalIndex, 0, 1);
+        
+        if(n1 !== 0) {
+            throw new Error("signalWorkers: Expected 0 on compareExchange. Got " + n1 + ".");
+        }
+
+        const agentsAwoken = Atomics.notify(MemorySystem.int32Array, signalIndex);
+
+        const n2 = Atomics.compareExchange(MemorySystem.int32Array, signalIndex, 1, 0);
+
+        if(n2 !== 1){
+            throw new Error("signalWorkers: Expected 1 on compareExchange. Got " + n2 + ".");
+        }
+
+        return agentsAwoken;
+    }
+
+    static tock() {
+
+        requestAnimationFrame(async () => {
+
+            const workersSignaled = Buffifier.signalWorkers();
+
+            await ThreadSystem.instance.work();
+
+            if(workersSignaled < WorkerSystem.workers.length) {
+                console.log("ALL WORKERS NOT SIGNALED, WORKERS SIGNALED: " + workersSignaled);
+            }
+
+            //setTimeout(() => {
+                this.tick();
+            //}, 500);
+
+        });
+    }
+
+    static async initFromWorker(sharedArrayBuffer, threadInstanceIndex, threadId, threadInitConfig) {
+
+        return new Promise((resolve) => {
+
+            this.isMainThread = false;
+
+            // use the passed in SharedArrayBuffer  
+            // because we are in a worker thread
+            MemorySystem.init(sharedArrayBuffer);
+
+            this.rootObject = MemorySystem.getInstance(MemorySystem.rootObjectIndex);
+
+            ThreadSystem.initFromWorker(threadId, threadInstanceIndex);
+
+            ThreadSystem.instance.init(this.rootObject, threadInitConfig).then(() => {
+                resolve();
+            });
+
+        });
+        
+    }
+
+    static async init(rootClass, canvas, options) {
+        return new Promise(async (resolve) => {
+
+
+            this.isMainThread = true;
+
+            const workingOptions = Object.assign({
+                allocate: 500000000, // allocates 500 MB for use (has to be evenly divisible by 8)
+                rootObjectWorkingSpace: 0 // used if rootClass is variable in size (e.g., BufferedArray)
+            }, options);
+
+            // create new SharedArrayBuffer because this is on the main thread
+            MemorySystem.init(new SharedArrayBuffer(workingOptions.allocate));
+
+            // create the root object
+            this.rootObject = MemorySystem.createInstance(rootClass, null, {
+                workingSpace: workingOptions.rootObjectWorkingSpace
+            });
+
+            await ThreadSystem.init(ThreadSystem.threadIds.main);
+
+            await WorkerSystem.init(canvas.transferControlToOffscreen());
+
+            resolve(this.rootObject);
+
+        });
+    }
+
+    // nice to have here to not expose MemorySystem
+    static createInstance(...args) {
+        return MemorySystem.createInstance(...args);
+    }
 
 }
 
@@ -637,67 +841,111 @@ export class WorkerSystem {
 
     static workers = [];
 
-    static init(offscreenCanvas) {
+    static async init(offscreenCanvas) {
+        return new Promise(async (resolve) => {
 
-        for(const instance of ThreadSystem.threadInstances) {
+            let canvasWorker = null;
 
-            const threadId = instance.threadId;
+            for(const instance of ThreadSystem.threadInstances) {
 
-            // if not main thread instance
-            if(threadId > 0) {
+                const threadId = instance.threadId;
 
-                const isCanvasThread = (threadId === 1);
+                // if not main thread instance
+                if(threadId > 0) {
 
-                const workerItem = {
-                    ready: false,
-                    instance: new Worker("worker.js", { type: "module" }),
-                    threadId: threadId,
-                    threadInstance: instance,
-                    threadInstanceConfig: isCanvasThread ? {
-                        canvas: offscreenCanvas,
-                        devicePixelRatio: globalThis.devicePixelRatio
-                    } : {},
-                    transferObjects: isCanvasThread ? [offscreenCanvas] : undefined
-                };
+                    const isCanvasThread = (threadId === 1);
 
-                this.rigWorkerItem(workerItem);
+                    const workerItem = {
+                        loaded: false,
+                        ready: false,
+                        instance: new Worker("worker.js", { type: "module" }),
+                        threadId: threadId,
+                        threadInstance: instance,
+                        threadInstanceConfig: isCanvasThread ? {
+                            canvas: offscreenCanvas,
+                            devicePixelRatio: globalThis.devicePixelRatio
+                        } : {},
+                        transferObjects: isCanvasThread ? [offscreenCanvas] : undefined
+                    };
 
-                this.workers.push(workerItem);
+                    console.log("worker launched", workerItem);
+
+                    if(isCanvasThread) {
+                        canvasWorker = workerItem
+                    } else {
+                        this.workers.push(workerItem);
+                    }
+                }
             }
-        }
 
-        let intervalId = setInterval(() => {
-            if(this.workers.every((w) => w.ready)) {
-                clearInterval(intervalId);
-                this.onWorkersReady();
-            }
-        }, 300);
+            console.log("all workers launched", this.workers);
 
-    }
+            this.workers.push(canvasWorker);
 
-    static rigWorkerItem(worker) {
+            await this.rigWorkers();
 
-        worker.instance.addEventListener("message", async ({ data }) => {
-        
-            if(data[0] === this.messages.LOADED) {
-    
-                worker.instance.postMessage([
-                    this.messages.INIT, 
-                    worker.threadInstance._b.index, 
-                    worker.threadId,
-                    worker.threadInstanceConfig,
-                    MemorySystem.buffer, 
-                    worker.transferObjects
-                ], worker.transferObjects);
-
-            } else if (data[0] === this.messages.READY) {
-
-                worker.ready = true;
-
-            }
+            resolve();
 
         });
 
+    }
+
+    static async rigWorkers() {
+        return new Promise(async (resolve) => {
+            let currentWorkerInitIndex = 0;
+
+            const sendNextInit = () => {
+
+                if(currentWorkerInitIndex < this.workers.length) {
+                    
+                    const w = this.workers[currentWorkerInitIndex];
+
+                    console.log("sending next init to", w);
+
+                    w.instance.postMessage([
+                        this.messages.INIT, 
+                        w.threadInstance._b.index, 
+                        w.threadId,
+                        w.threadInstanceConfig,
+                        MemorySystem.buffer, 
+                        w.transferObjects
+                    ], w.transferObjects);
+
+                    currentWorkerInitIndex++;
+
+                } else {
+                    resolve();
+                }
+
+            };
+
+            for(const worker of this.workers) {
+                
+                worker.instance.addEventListener("message", async ({ data }) => {
+                
+                    console.log("worker message received", data, worker);
+
+                    if(data[0] === this.messages.LOADED) {
+        
+                        worker.loaded = true;
+        
+                        if(this.workers.every(w => w.loaded)) {
+
+                            sendNextInit();
+
+                        }
+        
+                    } else if (data[0] === this.messages.READY) {
+        
+                        worker.ready = true;
+        
+                        sendNextInit();
+        
+                    }
+        
+                });
+            }
+        });
     }
 
     static onWorkersReady () {
@@ -716,11 +964,20 @@ export class WorkerSystem {
             await Buffifier.initFromWorker(sharedArrayBuffer, threadInstanceIndex, threadId, threadInitConfig);
 
             postMessage([this.messages.READY]);
-    
-            console.log("from worker: i'm ready!");
-    
+
+            this.tick();
+
         }
         
+    }
+
+    static async tick() {
+
+        Atomics.wait(MemorySystem.int32Array, MemorySystem.metaDataIndices.workersSignal, 0);
+
+        await ThreadSystem.instance.work();
+
+        this.tick();
     }
 
 }
@@ -754,44 +1011,48 @@ class ThreadSystem {
 
     }
 
-    static init(threadId) {
+    static async init(threadId) {
+        return new Promise(async (resolve) => {
 
-        this.currentThreadId = threadId;
+            this.currentThreadId = threadId;
 
-        const threadClass = this.getThreadClassById(threadId);
+            const threadClass = this.getThreadClassById(threadId);
 
-        this.instance = MemorySystem.createInstance(threadClass, { threadId });
-            
-        if(this.threadIds.main === threadId) {
+            this.instance = MemorySystem.createInstance(threadClass, { threadId });
+                
+            if(this.threadIds.main === threadId) {
 
-            // since we are on the main thread, we create all other thread 
-            // instances here so workers can load the one they are
-            // assigned via postMessage -> MemorySystem.getInstance
+                // since we are on the main thread, we create all other thread 
+                // instances here so workers can load the one they are
+                // assigned via postMessage -> MemorySystem.getInstance
 
-            this.threadInstances = new Array(this.totalThreads);
+                this.threadInstances = new Array(this.totalThreads);
 
-            // add already created main instance
-            this.threadInstances[this.threadIds.main] = this.instance;
+                // add already created main instance
+                this.threadInstances[this.threadIds.main] = this.instance;
 
-            // create canvas thread instance
-            this.threadInstances[this.threadIds.canvas] = 
-                MemorySystem.createInstance(this.getThreadClassById(this.threadIds.canvas), {
-                    threadId: this.threadIds.canvas
-                });
-               
-            let n = 2;
-            
-            // create the others
-            for(const cls of config.threads.others) {
-                this.threadInstances[n] = MemorySystem.createInstance(cls, {
-                    threadId: n
-                });
-                n++;
+                // create canvas thread instance
+                this.threadInstances[this.threadIds.canvas] = 
+                    MemorySystem.createInstance(this.getThreadClassById(this.threadIds.canvas), {
+                        threadId: this.threadIds.canvas
+                    });
+                
+                let n = 2;
+                
+                // create the others
+                for(const cls of config.threads.others) {
+                    this.threadInstances[n] = MemorySystem.createInstance(cls, {
+                        threadId: n
+                    });
+                    n++;
+                }
+
+                await this.instance.init(Buffifier.rootObject);
+
+                resolve();
             }
 
-            this.instance.init(this.rootObject);
-
-        }
+        });
 
     }
 
@@ -808,6 +1069,5 @@ class ThreadSystem {
     }
     
 }
-
 
 

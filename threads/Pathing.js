@@ -1,7 +1,7 @@
 import { DataTypes } from "../Buffifier.js";
 import { BaseThread } from "./Base.js";
 
-export class EntityZSetterThread extends BaseThread {
+export class PathingThread extends BaseThread {
 
     static _meta = {
 
@@ -18,7 +18,7 @@ export class EntityZSetterThread extends BaseThread {
 
     app = null;
 
-    init = async (app, config) => {
+    init = async (app) => {
         
         return new Promise(async (resolve) => {
 
@@ -38,16 +38,6 @@ export class EntityZSetterThread extends BaseThread {
     }
     
 }
-
-
-
-
-
-
-
-
-
-
 
 
 
